@@ -100,12 +100,16 @@ standing in the main checkout lists the worktrees' sessions too. `--project PATH
 subtree rule from a root you name instead, and `--all-projects` covers every project there is. All
 three reach projects whose directory you have since deleted or renamed, which walking directories
 yourself cannot. When a listing spans more than one project, each row gains a project column before
-the title; `--format json` carries the full path as `cwd` on every session. Rendering follows the
+the title, labelled by the repository — a worktree's sessions carry the repo's name, not the
+worktree's, so one repo reads as one project. Inside a single repository that slot carries a
+worktree column instead, naming which worktree each session ran in (`—` for the repo's own
+checkout); it appears only when the sessions span more than one. `--format json` carries the full
+path as `cwd` on every session. Rendering follows the
 same scope, so an id copied off a listing opens where you read it — no `cd` into the worktree
 first — and `agentry view` with no id reaches the whole subtree too, picking the most recently
 written session file rather than the current directory's.
 
-Sessions print oldest-to-newest, so the most recent is at the bottom, next to your prompt. Each row shows the last-activity time (when the session's most recent turn ended — the same recency the list is ordered by), duration, turn count, a title (a name you chose if set — from renaming the session, or from `--name` / `/rename`, whichever the log records last — else Claude Code's own `ai-title` summary, falling back to the first prompt, skipping a leading `/clear`), and the full id — copy an id and pass it to `agentry <id>` to render that session. A forked session (Claude Code's `--fork-session` / `/branch`) is grouped under the original it was forked from and its title indented with `└─`; while it still carries the original's inherited title it is shown by its first new prompt instead, so the two are distinguishable.
+Sessions print oldest-to-newest, so the most recent is at the bottom, next to your prompt. Each row shows the last-activity time (when the session's most recent turn ended — the same recency the list is ordered by), duration, turn count, a title (a name you chose if set — from renaming the session, or from `--name` / `/rename`, whichever the log records last — else Claude Code's own `ai-title` summary, falling back to the first prompt, skipping a leading `/clear`), and the full id — copy an id and pass it to `agentry <id>` to render that session. A forked session (Claude Code's `--fork-session` / `/branch`) is grouped under the original it was forked from and its title indented with `└─`; while it still carries the original's inherited title it is shown by its first new prompt instead, so the two are distinguishable. A title that just repeats the row's worktree — what you get when one argument names both the worktree and the conversation, as `devx -n plan -w` does — is replaced by the session's first prompt for the same reason: the worktree column already shows it.
 
 ### Options
 

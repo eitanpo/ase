@@ -523,6 +523,14 @@ func arrange(sums []model.Summary) []frow {
 					s.Title = d
 				}
 			}
+			// A title that only repeats the row's worktree is a launch handle, not a
+			// description: one argument named both, and the worktree column beside it
+			// already carries the string. Falls to the first prompt, which the list
+			// already excludes /clear from. Checked after the fork rule so a rewritten
+			// fork title is judged rather than the inherited one.
+			if wt := worktreeName(s.Cwd); wt != "" && strings.TrimSpace(s.Title) == wt && len(s.Prompts) > 0 {
+				s.Title = s.Prompts[0]
+			}
 			rows = append(rows, frow{s: s, fork: i > 0})
 		}
 	}
@@ -571,7 +579,7 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 	if width <= 0 {
 		width = fallbackWidth
 	}
-	// columns: when(16) dur(7,right) turns(4,right) [from] [project] title(rest) id(36), 2-space gaps
+	// columns: when(16) dur(7,right) turns(4,right) [from] [project|worktree] title(rest) id(36), 2-space gaps
 	const whenW, durW, turnsW, idW, projMaxW = 16, 7, 4, 36, 24
 	// The entrypoint tag follows the project column's rule: drawn only when the
 	// listing spans more than one, so a listing of one kind is unchanged. Width
@@ -583,8 +591,17 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 	}
 	// The project column exists only when the listing spans more than one, so a
 	// single-project listing — every listing before --all-projects/--project —
-	// keeps its exact previous layout.
+	// keeps its exact previous layout. Inside one project the same slot carries
+	// the worktree instead: the two are mutually exclusive by construction, since
+	// one needs more than one project and the other exactly one, so the title
+	// never pays for two path columns. A project label is a path suffix and keeps
+	// its tail; a worktree name keeps its head, which is the part someone chose.
 	labels := projectLabels(sums)
+	keepTail := true
+	if labels == nil {
+		labels = worktreeLabels(sums)
+		keepTail = false
+	}
 	projW := 0
 	for _, l := range labels {
 		if n := utf8.RuneCountInString(l); n > projW {
@@ -598,12 +615,11 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 	if fromW > 0 {
 		gaps++
 	}
-	// The project column is capped twice: absolutely, and at a third of what the
+	// The path column is capped twice: absolutely, and at a third of what the
 	// two variable columns have to share. Without the second cap a long project
 	// name starves the title — at 100 columns a 21-character repo name leaves the
 	// title at its 10-column floor, which is the column the row is actually read
-	// by. The label is a path suffix, so it truncates from the left: the tail is
-	// what tells two projects apart.
+	// by. The same cap serves the worktree column, which fills the same slot.
 	if projW > 0 {
 		avail := width - (whenW + durW + turnsW + idW + fromW + gaps*2)
 		if cap := avail / 3; projW > cap {
@@ -657,7 +673,13 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 		}
 		proj := ""
 		if projW > 0 {
-			proj = dim.Render(pad(truncateLeft(labels[s.Cwd], projW), projW)) + "  "
+			label := labels[s.Cwd]
+			if keepTail {
+				label = truncateLeft(label, projW)
+			} else {
+				label = truncate(label, projW)
+			}
+			proj = dim.Render(pad(label, projW)) + "  "
 		}
 		fmt.Fprintf(&b, "%s  %s  %s  %s%s%s  %s\n",
 			meta.Render(when),
@@ -866,9 +888,32 @@ func varyingTags(sums []model.Summary) map[string]string {
 	return tags
 }
 
+// worktreeMarker is the path segment Claude Code puts a repo's worktrees under.
+// A cwd containing it names a place inside a repo, not a project of its own.
+const worktreeMarker = "/.claude/worktrees/"
+
+// projectRoot is the repository a cwd belongs to: itself, or the repo holding it
+// when it is one of that repo's worktrees. The listing's scope rule already
+// treats a repo's worktrees as the repo, and a label that disagreed reported one
+// project as several.
+func projectRoot(cwd string) string {
+	if i := strings.Index(cwd, worktreeMarker); i >= 0 {
+		return cwd[:i]
+	}
+	return cwd
+}
+
+// worktreeName is the worktree a cwd names, or "" for a repo's own checkout.
+func worktreeName(cwd string) string {
+	if i := strings.Index(cwd, worktreeMarker); i >= 0 {
+		return cwd[i+len(worktreeMarker):]
+	}
+	return ""
+}
+
 // projectLabels maps each distinct session cwd to the shortest suffix of path
-// components that tells it apart from the others present. One project listed
-// shows as its own directory name; two repos sharing a basename grow a
+// components that tells its project apart from the others present. One project
+// listed shows as its own directory name; two repos sharing a basename grow a
 // component each until they differ, so `me/agentry` and `wix-private/agentry`
 // both appear rather than two identical `agentry` rows.
 //
@@ -877,17 +922,57 @@ func varyingTags(sums []model.Summary) map[string]string {
 // does not fit — at 80 columns the title column is already at its floor. Returns
 // nil when fewer than two projects are present, which is the signal not to draw
 // the column at all.
+//
+// Labels are computed over projectRoot, not over the cwd, so several worktrees
+// of one repo share one label and count as one project.
 func projectLabels(sums []model.Summary) map[string]string {
-	paths := map[string]bool{}
+	roots := map[string]bool{}
+	byCwd := map[string]string{}
 	for _, s := range sums {
-		if s.Cwd != "" {
-			paths[s.Cwd] = true
+		if s.Cwd == "" {
+			continue
 		}
+		root := projectRoot(s.Cwd)
+		roots[root] = true
+		byCwd[s.Cwd] = root
 	}
-	if len(paths) < 2 {
+	if len(roots) < 2 {
 		return nil
 	}
-	return shortestUniqueLabels(paths)
+	rootLabels := shortestUniqueLabels(roots)
+	labels := make(map[string]string, len(byCwd))
+	for cwd, root := range byCwd {
+		labels[cwd] = rootLabels[root]
+	}
+	return labels
+}
+
+// worktreeLabels maps each distinct session cwd to the worktree it ran in, "—"
+// for a session in the repo's own checkout. It fills the project column's slot
+// inside one repository, where the worktree is the only thing telling one line of
+// work from another. Returns nil unless the listing holds exactly one project and
+// more than one place within it — so it is never drawn beside the project column,
+// and never drawn when every session sat in the same place.
+func worktreeLabels(sums []model.Summary) map[string]string {
+	roots := map[string]bool{}
+	labels := map[string]string{}
+	places := map[string]bool{}
+	for _, s := range sums {
+		if s.Cwd == "" {
+			continue
+		}
+		roots[projectRoot(s.Cwd)] = true
+		name := worktreeName(s.Cwd)
+		if name == "" {
+			name = "—"
+		}
+		labels[s.Cwd] = name
+		places[name] = true
+	}
+	if len(roots) != 1 || len(places) < 2 {
+		return nil
+	}
+	return labels
 }
 
 // shortestUniqueLabels maps each path to the shortest suffix of its components

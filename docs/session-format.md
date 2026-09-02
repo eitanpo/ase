@@ -41,6 +41,12 @@ below that a change would depend on — the counts and version ranges quoted her
   `~/.claude/projects/` holds one folder per worktree
   (`-Users-me--central-worktrees-pr-1`) and a repo's sessions are split across them. Nothing
   in the slug marks it as a worktree of anything.
+- **Where the worktree was created shows in its directory name.** A worktree created from the
+  desktop app carries a 6-character hex suffix (`ecr-gar-single-registry-f399e1`); one created
+  from the terminal does not (`jfrog-usage`). The correlation held on all 9 worktrees of the
+  2026-08-17 sweep — 6 hashed, every one `claude-desktop`; 3 unhashed, every one `cli`. The
+  consequence for display: a worktree name's head is what someone chose and its tail can be
+  generated, so shortening one must keep the head.
 - **Claude Desktop sessions live here too**, in this same format, distinguished only by
   `entrypoint: claude-desktop`. The desktop app additionally keeps
   `~/Library/Application Support/Claude/claude-code-sessions/<workspace>/<profile>/local_<session-uuid>.json`

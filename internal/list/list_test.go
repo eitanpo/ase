@@ -299,11 +299,30 @@ func TestProjectLabels(t *testing.T) {
 			},
 		},
 		{
-			name: "a worktree under its repo keeps its own name",
+			// A worktree is a place inside a repo, not a project: labelling it by
+			// its own name reported one project as two, and the listing's scope
+			// rule already treats a repo's worktrees as the repo. With one project
+			// left, the column is not drawn at all.
+			name: "a repo and its worktree are one project",
 			cwds: []string{"/p/repo", "/p/repo/.claude/worktrees/feature"},
+			want: nil,
+		},
+		{
+			// The case that made this wrong visible: three worktrees of one repo
+			// read as `plan`, `ngnix` and `jfrog-usage` — three labels naming no
+			// project. Every row must carry the repo, beside a real second project.
+			name: "worktrees of one repo share the repo's label",
+			cwds: []string{
+				"/p/wix/artifactory-migration",
+				"/p/wix/artifactory-migration/.claude/worktrees/plan",
+				"/p/wix/artifactory-migration/.claude/worktrees/ngnix",
+				"/p/me/dotfiles",
+			},
 			want: map[string]string{
-				"/p/repo":                           "repo",
-				"/p/repo/.claude/worktrees/feature": "feature",
+				"/p/wix/artifactory-migration":                         "artifactory-migration",
+				"/p/wix/artifactory-migration/.claude/worktrees/plan":  "artifactory-migration",
+				"/p/wix/artifactory-migration/.claude/worktrees/ngnix": "artifactory-migration",
+				"/p/me/dotfiles": "dotfiles",
 			},
 		},
 		{
@@ -389,6 +408,102 @@ func TestRenderProjectColumn(t *testing.T) {
 			t.Errorf("title squeezed out by the project column: %q", b.String())
 		}
 	})
+}
+
+// TestWorktreeLabels pins both gates on the column that fills the project
+// column's slot inside one repository, and the two shapes that must not draw it.
+func TestWorktreeLabels(t *testing.T) {
+	const repo = "/p/wix/artifactory-migration"
+	wt := func(name string) string { return repo + "/.claude/worktrees/" + name }
+	tests := []struct {
+		name string
+		cwds []string
+		want map[string]string
+	}{
+		{
+			// Without this column the four rows differ by nothing but their titles,
+			// since collapsing worktrees into the project label removed the only
+			// field that separated them.
+			name: "one repo across worktrees names each place",
+			cwds: []string{repo, wt("plan"), wt("ngnix")},
+			want: map[string]string{
+				repo:        "—",
+				wt("plan"):  "plan",
+				wt("ngnix"): "ngnix",
+			},
+		},
+		{
+			// Appear-only-when-it-varies: every session sat in the same place, so
+			// the column would repeat one value down the listing.
+			name: "one worktree alone draws no column",
+			cwds: []string{wt("plan"), wt("plan")},
+			want: nil,
+		},
+		{
+			name: "a repo with no worktree draws no column",
+			cwds: []string{repo, repo},
+			want: nil,
+		},
+		{
+			// The mutual exclusion the layout depends on: with two projects the
+			// project column is drawn, so this one must not be, or a row would
+			// carry two path columns and the title would pay for both.
+			name: "more than one project draws no worktree column",
+			cwds: []string{repo, wt("plan"), "/p/me/dotfiles"},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sums []model.Summary
+			for i, c := range tt.cwds {
+				sums = append(sums, model.Summary{ID: string(rune('a' + i)), Cwd: c})
+			}
+			got := worktreeLabels(sums)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for k, v := range tt.want {
+				if got[k] != v {
+					t.Errorf("label for %q = %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderWorktreeColumn pins what the rendered row shows: the worktree keeps
+// its head where the project label keeps its tail, since a worktree Claude Code
+// creates from the desktop app carries a generated hash suffix.
+func TestRenderWorktreeColumn(t *testing.T) {
+	const repo = "/p/wix/artifactory-migration"
+	mk := func(id, cwd, title string) model.Summary {
+		return model.Summary{
+			ID: id, Cwd: cwd, Title: title,
+			Start: time.Date(2026, 6, 3, 14, 0, 0, 0, time.UTC),
+			End:   time.Date(2026, 6, 3, 14, 5, 0, 0, time.UTC),
+		}
+	}
+	var b strings.Builder
+	sums := []model.Summary{
+		mk("a", repo, "alpha"),
+		mk("b", repo+"/.claude/worktrees/ecr-gar-single-registry-f399e1", "beta"),
+	}
+	if err := Render(&b, sums, Options{Width: 160, Color: false}); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	// The head is the name someone chose; left-truncation would keep the hash and
+	// drop it, which is why the direction differs from the project column's.
+	if !strings.Contains(out, "ecr-gar-single-registry") {
+		t.Errorf("worktree name lost its head: %q", out)
+	}
+	if !strings.Contains(out, "—") {
+		t.Errorf("a session in the repo's own checkout must show —: %q", out)
+	}
+	if strings.Contains(out, "artifactory-migration") {
+		t.Errorf("one project must not draw the project column: %q", out)
+	}
 }
 
 func TestTruncateLeft(t *testing.T) {
@@ -1229,4 +1344,59 @@ func TestReplyTextIsNeverSerialized(t *testing.T) {
 	if strings.Contains(strings.ToLower(b.String()), "replies") {
 		t.Errorf("a replies key appeared in --format json: %s", b.String())
 	}
+}
+
+// TestWorktreeTitleFallThrough pins the rule that a title repeating the row's
+// worktree falls to the first prompt: the worktree column already carries that
+// string, so the title would spend the row's one scannable field on a duplicate.
+func TestWorktreeTitleFallThrough(t *testing.T) {
+	const repo = "/p/wix/artifactory-migration"
+	wt := func(name string) string { return repo + "/.claude/worktrees/" + name }
+	mk := func(id, cwd, title string, prompts ...string) model.Summary {
+		return model.Summary{
+			ID: id, Cwd: cwd, Title: title, Prompts: prompts,
+			Start: time.Date(2026, 6, 3, 14, 0, 0, 0, time.UTC),
+			End:   time.Date(2026, 6, 3, 14, 5, 0, 0, time.UTC),
+		}
+	}
+	titleOf := func(sums []model.Summary, id string) string {
+		for _, r := range arrange(sums) {
+			if r.s.ID == id {
+				return r.s.Title
+			}
+		}
+		return ""
+	}
+
+	t.Run("a title equal to the worktree falls to the first prompt", func(t *testing.T) {
+		sums := []model.Summary{mk("a", wt("plan"), "plan", "draft the migration gantt")}
+		if got := titleOf(sums, "a"); got != "draft the migration gantt" {
+			t.Errorf("title = %q, want the first prompt", got)
+		}
+	})
+
+	t.Run("a title a person wrote stands", func(t *testing.T) {
+		// The trigger is duplication, not similarity: this names the same work and
+		// is not the worktree's name, so nothing replaces it.
+		sums := []model.Summary{mk("a", wt("plan"), "Plan the migration", "draft the gantt")}
+		if got := titleOf(sums, "a"); got != "Plan the migration" {
+			t.Errorf("title = %q, want it left alone", got)
+		}
+	})
+
+	t.Run("a session with no prompt keeps its title", func(t *testing.T) {
+		sums := []model.Summary{mk("a", wt("plan"), "plan")}
+		if got := titleOf(sums, "a"); got != "plan" {
+			t.Errorf("title = %q, want the title kept", got)
+		}
+	})
+
+	t.Run("the repo's own checkout is untouched", func(t *testing.T) {
+		// worktreeName is empty there, so a session titled after the repo directory
+		// is not a duplicate of anything the row shows.
+		sums := []model.Summary{mk("a", repo, "artifactory-migration", "some prompt")}
+		if got := titleOf(sums, "a"); got != "artifactory-migration" {
+			t.Errorf("title = %q, want it left alone", got)
+		}
+	})
 }
