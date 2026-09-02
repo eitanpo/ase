@@ -1477,3 +1477,104 @@ func TestRenderAbbreviatedID(t *testing.T) {
 		t.Errorf("title should have grown into the freed columns: %q", out)
 	}
 }
+
+// TestFitLabels pins the collision rule for both path columns: truncation first,
+// then the colliders keep the end that separates them. The failure it prevents
+// is silent — two places drawn as one label that claims to be either.
+func TestFitLabels(t *testing.T) {
+	tests := []struct {
+		name     string
+		labels   map[string]string
+		width    int
+		keepTail bool
+		want     map[string]string
+	}{
+		{
+			// The case from a real listing: three worktrees whose names differ in
+			// their last character all rendered "update-cloudsmi…" at 16 columns.
+			name:  "worktrees differing at the tail keep it",
+			width: 16,
+			labels: map[string]string{
+				"/r/.claude/worktrees/update-cloudsmith":  "update-cloudsmith",
+				"/r/.claude/worktrees/update-cloudsmith2": "update-cloudsmith2",
+				"/r/.claude/worktrees/update-cloudsmith3": "update-cloudsmith3",
+			},
+			want: map[string]string{
+				"/r/.claude/worktrees/update-cloudsmith":  "update-cloudsm…h",
+				"/r/.claude/worktrees/update-cloudsmith2": "update-cloudsm…2",
+				"/r/.claude/worktrees/update-cloudsmith3": "update-cloudsm…3",
+			},
+		},
+		{
+			// Many rows sharing one label is not a collision. The repo-root "—" and
+			// several sessions in one worktree both take this path.
+			name:   "one label on many rows is left alone",
+			width:  8,
+			labels: map[string]string{"/r/a": "—", "/r/b": "—", "/r/c": "ci"},
+			want:   map[string]string{"/r/a": "—", "/r/b": "—", "/r/c": "ci"},
+		},
+		{
+			// Mirrored for the project column, where the tail is what is kept: two
+			// repos sharing a basename left-truncate to the same "…/agentry".
+			name:     "projects differing at the head keep it",
+			width:    9,
+			keepTail: true,
+			labels:   map[string]string{"/p/me/agentry": "me/agentry", "/p/wix/agentry": "wix-private/agentry"},
+			want:     map[string]string{"/p/me/agentry": "m…agentry", "/p/wix/agentry": "w…agentry"},
+		},
+		{
+			// Designed failure: the colliders differ 8 characters from the kept end,
+			// so no head-plus-tail split fits 8 columns. The duplicate stands rather
+			// than a meaningless marker being invented.
+			name:   "no split that fits leaves the duplicate",
+			width:  8,
+			labels: map[string]string{"/r/x": "aaaaaaaaXbbbbbbbb", "/r/y": "aaaaaaaaYbbbbbbbb"},
+			want:   map[string]string{"/r/x": "aaaaaaa…", "/r/y": "aaaaaaa…"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := fitLabels(tt.labels, tt.width, tt.keepTail)
+			for k, want := range tt.want {
+				if got[k] != want {
+					t.Errorf("label for %q = %q, want %q", k, got[k], want)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderWorktreeCollision pins the rule end to end: three worktrees of one
+// repo must be three distinguishable cells in the rendered row, not one string
+// repeated.
+func TestRenderWorktreeCollision(t *testing.T) {
+	const repo = "/p/wix/artifactory-migration"
+	mk := func(id, wt, title string) model.Summary {
+		return model.Summary{
+			ID: id, Cwd: repo + "/.claude/worktrees/" + wt, Title: title,
+			Prompts: []string{title},
+			Start:   time.Date(2026, 6, 3, 14, 0, 0, 0, time.UTC),
+			End:     time.Date(2026, 6, 3, 14, 5, 0, 0, time.UTC),
+		}
+	}
+	var b strings.Builder
+	sums := []model.Summary{
+		mk("aaaaaaaa-1111-4c3a-96fe-99698a557d14", "update-cloudsmith", "alpha"),
+		mk("bbbbbbbb-2222-4c3a-96fe-99698a557d14", "update-cloudsmith2", "beta"),
+		mk("cccccccc-3333-4c3a-96fe-99698a557d14", "update-cloudsmith3", "gamma"),
+	}
+	if err := Render(&b, sums, Options{Width: 90, Color: false}); err != nil {
+		t.Fatal(err)
+	}
+	cells := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n") {
+		// The worktree column sits after when, duration and turns; take the field
+		// before the title rather than a fixed offset, so a width change here does
+		// not silently make the assertion vacuous.
+		fields := strings.Split(strings.TrimSpace(line[33:]), "  ")
+		cells[fields[0]] = true
+	}
+	if len(cells) != 3 {
+		t.Errorf("three worktrees must render three distinct cells, got %v\n%s", cells, b.String())
+	}
+}

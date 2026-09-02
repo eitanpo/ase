@@ -10,6 +10,7 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -641,6 +642,10 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 	if titleW < 10 {
 		titleW = 10
 	}
+	// Fit the path labels to the column once the width is settled: truncation has
+	// to see the whole set, or two labels that shorten to the same string are
+	// drawn as one label claiming to be two places.
+	cells := fitLabels(labels, projW, keepTail)
 
 	// Print oldest-to-newest so the most recent session lands at the bottom,
 	// nearest the prompt — the ls -ltr / shell-history / chat convention for
@@ -678,13 +683,7 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 		}
 		proj := ""
 		if projW > 0 {
-			label := labels[s.Cwd]
-			if keepTail {
-				label = truncateLeft(label, projW)
-			} else {
-				label = truncate(label, projW)
-			}
-			proj = dim.Render(pad(label, projW)) + "  "
+			proj = dim.Render(pad(cells[s.Cwd], projW)) + "  "
 		}
 		fmt.Fprintf(&b, "%s  %s  %s  %s%s%s  %s\n",
 			meta.Render(when),
@@ -978,6 +977,97 @@ func worktreeLabels(sums []model.Summary) map[string]string {
 		return nil
 	}
 	return labels
+}
+
+// fitLabels shortens each label to width columns, keeping the end that carries
+// the meaning: a project label is a path suffix and keeps its tail, a worktree
+// name keeps its head. Where two labels then render identically, the colliding
+// ones move the ellipsis inward and keep enough of the other end to tell them
+// apart — one character more than the longest run they share there, the mirror
+// of the distinguishing-prefix rule (lcp+1).
+//
+// The comparison is over distinct labels, so many rows sharing one label are not
+// a collision: the "—" every session in a repo's own checkout shows is left
+// alone, as is a worktree several sessions ran in. Where no split fits, the
+// duplicate stands — inventing a marker would mean nothing outside this listing,
+// and the session id already separates the rows.
+//
+// Not the shortest-unique-substring problem, which asks for the shortest
+// substring of one string unique within that same string; this asks which part
+// of each member of a set separates it from the others, so the suffix-array
+// machinery for SUS does not apply.
+func fitLabels(labels map[string]string, width int, keepTail bool) map[string]string {
+	cut := func(s string) string {
+		if keepTail {
+			return truncateLeft(s, width)
+		}
+		return truncate(s, width)
+	}
+	groups := map[string][]string{}
+	for _, l := range labels {
+		if _, ok := groups[cut(l)]; !ok {
+			groups[cut(l)] = nil
+		}
+	}
+	for _, l := range labels {
+		g := cut(l)
+		if !slices.Contains(groups[g], l) {
+			groups[g] = append(groups[g], l)
+		}
+	}
+	fitted := make(map[string]string, len(labels))
+	for cwd, l := range labels {
+		fitted[cwd] = cut(l)
+	}
+	for _, group := range groups {
+		if len(group) < 2 {
+			continue
+		}
+		keep := 1 + sharedRun(group, keepTail)
+		head := width - 1 - keep // room left for the other end
+		if keepTail {
+			head, keep = keep, width-1-keep
+		}
+		if head < 1 || keep < 1 {
+			continue // no split fits: the duplicate stands
+		}
+		for cwd, l := range labels {
+			if !slices.Contains(group, l) {
+				continue
+			}
+			fitted[cwd] = l[:head] + "…" + l[len(l)-keep:]
+		}
+	}
+	return fitted
+}
+
+// sharedRun is the longest run every pair in group shares at the end truncation
+// discards — the tail when heads are kept, the head when tails are kept. One
+// character past it is what separates the pair that agrees the longest.
+func sharedRun(group []string, keepTail bool) int {
+	longest := 0
+	for _, a := range group {
+		for _, b := range group {
+			if a == b {
+				continue
+			}
+			n := 0
+			for n < len(a) && n < len(b) {
+				if keepTail {
+					if a[n] != b[n] {
+						break
+					}
+				} else if a[len(a)-1-n] != b[len(b)-1-n] {
+					break
+				}
+				n++
+			}
+			if n > longest {
+				longest = n
+			}
+		}
+	}
+	return longest
 }
 
 // idFloor is the shortest id a listing prints. 8 hex characters separated all
