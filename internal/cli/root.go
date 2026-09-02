@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -112,6 +113,13 @@ func renderSession(cmd *cobra.Command, args []string, noColor *bool, isRoot bool
 		path, err = mostRecent(cmd, cwd, from)
 	}
 	if err != nil {
+		// An ambiguous prefix is a bad argument, not a missing input: the sessions
+		// are all there and the caller has to say which. Name the candidates so the
+		// next attempt is a copy rather than another guess.
+		var amb *locate.AmbiguousIDError
+		if errors.As(err, &amb) {
+			return usageErr("%v:\n  %s", amb, strings.Join(amb.IDs, "\n  "))
+		}
 		return noInputErr(err)
 	}
 	sess, err := parse.Load(path)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -401,4 +402,73 @@ func mustChtime(t *testing.T, path string, mod time.Time) {
 	if err := os.Chtimes(path, mod, mod); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestSessionByPrefix pins prefix resolution: the rule that lets a caller pass
+// back the abbreviated id a listing printed. An exact match is checked first, so
+// a full id can never be reported ambiguous, and a prefix naming several
+// sessions is an error rather than a silent pick of one of them.
+func TestSessionByPrefix(t *testing.T) {
+	root := t.TempDir()
+	old := ProjectsRoot
+	ProjectsRoot = root
+	t.Cleanup(func() { ProjectsRoot = old })
+
+	const cwd = "/fake/proj"
+	projDir := filepath.Join(root, "-fake-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{
+		"abcdef12-1111-4c3a-96fe-99698a557d14",
+		"abcdef12-2222-4c3a-96fe-99698a557d14",
+		"ffffffff-3333-4c3a-96fe-99698a557d14",
+	}
+	for _, id := range ids {
+		if err := os.WriteFile(filepath.Join(projDir, id+".jsonl"), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("a unique prefix resolves", func(t *testing.T) {
+		got, err := Session(cwd, "ffffffff")
+		if err != nil {
+			t.Fatalf("Session by unique prefix: %v", err)
+		}
+		if filepath.Base(got) != ids[2]+".jsonl" {
+			t.Errorf("resolved %q, want %q", filepath.Base(got), ids[2]+".jsonl")
+		}
+	})
+
+	t.Run("a full id resolves", func(t *testing.T) {
+		got, err := Session(cwd, ids[0])
+		if err != nil {
+			t.Fatalf("Session by full id: %v", err)
+		}
+		if filepath.Base(got) != ids[0]+".jsonl" {
+			t.Errorf("resolved %q, want %q", filepath.Base(got), ids[0]+".jsonl")
+		}
+	})
+
+	t.Run("an ambiguous prefix errors and names the matches", func(t *testing.T) {
+		_, err := Session(cwd, "abcdef12")
+		var amb *AmbiguousIDError
+		if !errors.As(err, &amb) {
+			t.Fatalf("got %v, want an AmbiguousIDError", err)
+		}
+		if len(amb.IDs) != 2 {
+			t.Errorf("matched %v, want the two abcdef12 sessions", amb.IDs)
+		}
+		// The message has to say how many, or the caller cannot tell an ambiguous
+		// prefix from a missing session.
+		if !strings.Contains(amb.Error(), "2 sessions") {
+			t.Errorf("message %q should say how many matched", amb.Error())
+		}
+	})
+
+	t.Run("a prefix matching nothing is not found", func(t *testing.T) {
+		if _, err := Session(cwd, "0123abcd"); !errors.Is(err, ErrNoSession) {
+			t.Errorf("got %v, want ErrNoSession", err)
+		}
+	})
 }

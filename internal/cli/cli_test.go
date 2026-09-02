@@ -982,8 +982,14 @@ func TestBareCommandLists(t *testing.T) {
 	if bare != listed {
 		t.Errorf("bare `agentry` output must equal `agentry list`\n--- bare ---\n%s\n--- list ---\n%s", bare, listed)
 	}
-	if !strings.Contains(bare, id) {
-		t.Errorf("bare listing should name the session id %q\n%s", id, bare)
+	// The listing abbreviates the id to a unique prefix, so the full UUID is not
+	// what appears — what matters is that whatever it prints names this session,
+	// which the next check proves by rendering it.
+	if !strings.Contains(bare, id[:8]) {
+		t.Errorf("bare listing should name the session by an id prefix %q\n%s", id[:8], bare)
+	}
+	if byPrefix := captureStdout(t, func() { exec(id[:8]) }); byPrefix != rendered {
+		t.Errorf("the prefix the listing prints must render the same session as the full id\n--- prefix ---\n%s\n--- full ---\n%s", byPrefix, rendered)
 	}
 	if bare == rendered {
 		t.Errorf("bare `agentry` (list) must differ from rendering the session by id")

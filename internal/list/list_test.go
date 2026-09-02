@@ -1400,3 +1400,80 @@ func TestWorktreeTitleFallThrough(t *testing.T) {
 		}
 	})
 }
+
+// TestIDWidth pins the abbreviation rule: the shortest prefix that tells the
+// rows apart, floored so a short listing does not print an id too small to
+// resolve later, and grown when the rows demand it.
+func TestIDWidth(t *testing.T) {
+	mk := func(ids ...string) []model.Summary {
+		var out []model.Summary
+		for _, id := range ids {
+			out = append(out, model.Summary{ID: id})
+		}
+		return out
+	}
+	tests := []struct {
+		name string
+		sums []model.Summary
+		want int
+	}{
+		{
+			// Distinct at character 1, so uniqueness asks for 1 — the floor is what
+			// decides, because the id is copied out and passed back later.
+			name: "distinct ids take the floor",
+			sums: mk("aaaaaaaaaaaa", "bbbbbbbbbbbb"),
+			want: idFloor,
+		},
+		{
+			// The case the floor cannot answer: equal through character 8.
+			name: "a collision at the floor grows the prefix",
+			sums: mk("abcdef12-0000", "abcdef12-1111"),
+			want: 10,
+		},
+		{
+			name: "ids shorter than the floor are printed whole",
+			sums: mk("abc123", "def456"),
+			want: 6,
+		},
+		{
+			name: "one row still takes the floor",
+			sums: mk("aaaaaaaaaaaa"),
+			want: idFloor,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := idWidth(tt.sums); got != tt.want {
+				t.Errorf("idWidth = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRenderAbbreviatedID pins what the row shows and what it buys: the id is
+// cut to the computed width, and the columns it frees go to the title.
+func TestRenderAbbreviatedID(t *testing.T) {
+	const id = "ba6b3ded-475b-4c3a-96fe-99698a557d14"
+	sums := []model.Summary{{
+		ID:    id,
+		Title: "a title long enough to need the columns the full id was taking",
+		Start: time.Date(2026, 6, 3, 14, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 6, 3, 14, 5, 0, 0, time.UTC),
+	}}
+	var b strings.Builder
+	if err := Render(&b, sums, Options{Width: 100, Color: false}); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if strings.Contains(out, id) {
+		t.Errorf("the full id must not be printed: %q", out)
+	}
+	if !strings.Contains(out, id[:idFloor]) {
+		t.Errorf("output missing the id prefix %q: %q", id[:idFloor], out)
+	}
+	// 28 columns come back from the id; the title is what they are for. This
+	// substring starts past character 29, where the title used to be cut.
+	if !strings.Contains(out, "the columns the full id was") {
+		t.Errorf("title should have grown into the freed columns: %q", out)
+	}
+}

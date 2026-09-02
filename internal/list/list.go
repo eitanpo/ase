@@ -579,8 +579,13 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 	if width <= 0 {
 		width = fallbackWidth
 	}
-	// columns: when(16) dur(7,right) turns(4,right) [from] [project|worktree] title(rest) id(36), 2-space gaps
-	const whenW, durW, turnsW, idW, projMaxW = 16, 7, 4, 36, 24
+	// columns: when(16) dur(7,right) turns(4,right) [from] [project|worktree] title(rest) id(>=8), 2-space gaps
+	const whenW, durW, turnsW, projMaxW = 16, 7, 4, 24
+	// The id is abbreviated to the shortest prefix that tells these rows apart,
+	// floored at 8. A full UUID is 36 of a 100-column row for a value a caller
+	// only needs enough of to name the session again; the freed columns go to the
+	// title and the path column. See idWidth for the floor's reasoning.
+	idW := idWidth(sums)
 	// The entrypoint tag follows the project column's rule: drawn only when the
 	// listing spans more than one, so a listing of one kind is unchanged. Width
 	// is 4 to fit the "+" a resumed session takes.
@@ -688,7 +693,7 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 			from,
 			proj,
 			pad(title, titleW),
-			meta.Render(s.ID))
+			meta.Render(abbrevID(s.ID, idW)))
 		rail := railIndent + dim.Render(railGlyph) + " "
 		// What the session ran on leads the block: it describes the session, where
 		// the channels below it enumerate the session's contents.
@@ -973,6 +978,57 @@ func worktreeLabels(sums []model.Summary) map[string]string {
 		return nil
 	}
 	return labels
+}
+
+// idFloor is the shortest id a listing prints. 8 hex characters separated all
+// 443 sessions on the development machine — none collided even at 4 — so the
+// floor is not about today's collisions but about tomorrow's: a listing of three
+// rows would otherwise print 1-character ids that stop resolving as the machine
+// fills up, since an id is copied out of one listing and passed back later.
+const idFloor = 8
+
+// idWidth is the shortest prefix length that tells these sessions apart, floored
+// at idFloor and never longer than the ids themselves. This is git's rule for
+// abbreviated object names, computed over the rows in hand.
+//
+// The check is a pairwise scan over one listing — at most 69 projects' sessions
+// on the development machine, and 10 rows by default — so the trie that makes
+// shortest-unique-prefix O(n·L) instead of O(n²·L) would buy nothing here beyond
+// code to read.
+func idWidth(sums []model.Summary) int {
+	longest := 0
+	for _, s := range sums {
+		if n := len(s.ID); n > longest {
+			longest = n
+		}
+	}
+	if longest <= idFloor {
+		return longest // every id is already shorter than the floor
+	}
+	for n := idFloor; n < longest; n++ {
+		seen := make(map[string]bool, len(sums))
+		clash := false
+		for _, s := range sums {
+			p := abbrevID(s.ID, n)
+			if seen[p] {
+				clash = true
+				break
+			}
+			seen[p] = true
+		}
+		if !clash {
+			return n
+		}
+	}
+	return longest
+}
+
+// abbrevID cuts an id to n characters, or returns it whole when it is shorter.
+func abbrevID(id string, n int) string {
+	if len(id) <= n {
+		return id
+	}
+	return id[:n]
 }
 
 // shortestUniqueLabels maps each path to the shortest suffix of its components

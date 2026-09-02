@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,18 @@ var ErrNoProject = errors.New("no Claude project for this directory")
 
 // ErrNoSession means the project folder holds no selectable session.
 var ErrNoSession = errors.New("session not found")
+
+// AmbiguousIDError means a prefix named more than one session. It carries the
+// ids it matched so the caller can say how many and show them: a prefix that
+// resolves to several sessions must never be resolved to one of them silently.
+type AmbiguousIDError struct {
+	Prefix string
+	IDs    []string
+}
+
+func (e *AmbiguousIDError) Error() string {
+	return fmt.Sprintf("session id %q is ambiguous: it matches %d sessions", e.Prefix, len(e.IDs))
+}
 
 // ProjectsRoot is the directory Claude Code stores logs under. Overridable
 // for tests.
@@ -108,7 +121,30 @@ func Session(cwd, id string) (string, error) {
 			return p, nil
 		}
 	}
-	return "", ErrNoSession
+	// No exact match: treat the id as a prefix, the rule git applies to object
+	// names. An exact match is checked first and wins, so a full id can never be
+	// reported ambiguous. Several matches are an error rather than a pick —
+	// resolving one of them silently would render a session the caller did not
+	// name and give no sign of it.
+	var hits []string
+	for _, p := range paths {
+		base := strings.TrimSuffix(filepath.Base(p), ".jsonl")
+		if strings.HasPrefix(base, id) {
+			hits = append(hits, p)
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return "", ErrNoSession
+	case 1:
+		return hits[0], nil
+	}
+	ids := make([]string, 0, len(hits))
+	for _, p := range hits {
+		ids = append(ids, strings.TrimSuffix(filepath.Base(p), ".jsonl"))
+	}
+	sort.Strings(ids)
+	return "", &AmbiguousIDError{Prefix: id, IDs: ids}
 }
 
 // SessionsByRecency returns the sessions in cwd's scope newest-first by
