@@ -57,6 +57,8 @@ func addListFlags(cmd *cobra.Command) {
 	cmd.Flags().String("model", "", "only sessions that ran on a matching model (substring: opus, claude-opus-5)")
 	cmd.Flags().String("effort", "", "only sessions run at this reasoning effort (exact: low, medium, high, xhigh, max)")
 	_ = cmd.RegisterFlagCompletionFunc("effort", fixedComp(effortLevels))
+	cmd.Flags().Int("min-lines", 0, "only sessions that changed at least N lines (added plus removed, as Claude Code recorded them)")
+	cmd.Flags().Int("max-lines", 0, "only sessions that changed at most N lines; 0 selects the sessions that changed nothing")
 	cmd.Flags().Bool("all-projects", false, "list every project's sessions, not just this directory's")
 	cmd.Flags().String("project", "", "list PATH's sessions instead of this directory's, including anything nested under it")
 	addFromFlag(cmd)
@@ -156,6 +158,37 @@ func compileReply(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
+// parseChanged reads the two line bounds off the command line. A bound is set
+// only when the flag was given, so --max-lines 0 asks for the sessions that
+// changed nothing rather than reading as an unset flag. A negative bound is a
+// usage error: no session changed fewer than zero lines, so the value can only be
+// a mistake, and silently accepting it would return the whole listing for
+// --min-lines and nothing for --max-lines.
+func parseChanged(cmd *cobra.Command) (list.Changed, error) {
+	var c list.Changed
+	for _, b := range []struct {
+		flag string
+		set  func(*int)
+	}{
+		{"min-lines", func(v *int) { c.Min = v }},
+		{"max-lines", func(v *int) { c.Max = v }},
+	} {
+		if !cmd.Flags().Changed(b.flag) {
+			continue
+		}
+		n, _ := cmd.Flags().GetInt(b.flag)
+		if n < 0 {
+			return list.Changed{}, usageErr("--%s: %d is negative; a line count cannot be", b.flag, n)
+		}
+		set := n
+		b.set(&set)
+	}
+	if c.Min != nil && c.Max != nil && *c.Min > *c.Max {
+		return list.Changed{}, usageErr("--min-lines %d is above --max-lines %d, so no session can match", *c.Min, *c.Max)
+	}
+	return c, nil
+}
+
 // usedFlags are every usageFilters flag name, positive and negated; any of them,
 // like a time filter, lifts the default --limit so a filtered listing is not
 // silently capped.
@@ -230,7 +263,8 @@ func runList(cmd *cobra.Command, noColor *bool) error {
 	// A time, --used* or run filter without an explicit --limit lifts the default
 	// cap, so a filtered listing shows every match, not just ten.
 	filtering := cmd.Flags().Changed("since") || cmd.Flags().Changed("until") ||
-		cmd.Flags().Changed("model") || cmd.Flags().Changed("effort")
+		cmd.Flags().Changed("model") || cmd.Flags().Changed("effort") ||
+		cmd.Flags().Changed("min-lines") || cmd.Flags().Changed("max-lines")
 	for _, f := range usedFlags {
 		filtering = filtering || cmd.Flags().Changed(f)
 	}
@@ -251,6 +285,10 @@ func runList(cmd *cobra.Command, noColor *bool) error {
 		}
 	}
 	run := list.Run{Model: get("model"), Effort: get("effort")}
+	changed, err := parseChanged(cmd)
+	if err != nil {
+		return err
+	}
 
 	paths, err := sessionPaths(cmd)
 	if err != nil {
@@ -286,7 +324,7 @@ func runList(cmd *cobra.Command, noColor *bool) error {
 	// caller will actually see: capping first and filtering after would return
 	// fewer than N rows and give no hint why.
 	visible := list.FilterByFrom(sums, from)
-	selected := list.Select(list.Filter(visible, filters, run), sinceT, untilT, limit)
+	selected := list.Select(list.Filter(visible, filters, run, changed), sinceT, untilT, limit)
 	// A default that empties the listing must say so. Hidden non-interactive
 	// sessions are the one exclusion the caller did not ask for, so without this
 	// an empty result is indistinguishable from a project holding nothing.

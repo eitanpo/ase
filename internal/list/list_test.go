@@ -1633,3 +1633,46 @@ func TestRenderIncludeCost(t *testing.T) {
 		}
 	})
 }
+
+// TestFilterByChanged pins how much code a session changed as a selector, and
+// the two cases that decide whether the filter is honest: a session Claude Code
+// kept no record for matches no bound, and a ceiling of zero is a real bound
+// rather than an unset flag.
+func TestFilterByChanged(t *testing.T) {
+	n := func(v int) *int { return &v }
+	sums := []model.Summary{
+		{ID: "big", LinesAdded: n(14882), LinesRemoved: n(377)},
+		{ID: "small", LinesAdded: n(13), LinesRemoved: n(6)},
+		{ID: "readonly", LinesAdded: n(0), LinesRemoved: n(0)},
+		{ID: "unrecorded"},
+	}
+
+	t.Run("a floor counts additions and removals together", func(t *testing.T) {
+		// small changed 19 lines across the two counters, so a floor of 19 keeps it
+		// and a floor of 20 does not — the bound is inclusive.
+		assertIDs(t, Filter(sums, Changed{Min: n(19)}), []string{"big", "small"})
+		assertIDs(t, Filter(sums, Changed{Min: n(20)}), []string{"big"})
+	})
+
+	t.Run("a ceiling of zero selects the sessions that changed nothing", func(t *testing.T) {
+		// The case a "0 means unset" rule could not express, which is why the
+		// bounds are pointers.
+		assertIDs(t, Filter(sums, Changed{Max: n(0)}), []string{"readonly"})
+	})
+
+	t.Run("a session with no record matches neither bound", func(t *testing.T) {
+		// It makes no claim about how much it changed, so it can neither meet a
+		// floor nor be shown to respect a ceiling. Naming it under --max-lines
+		// would be the wrong answer rather than a wide one.
+		assertIDs(t, Filter(sums, Changed{Min: n(0)}), []string{"big", "small", "readonly"})
+		assertIDs(t, Filter(sums, Changed{Max: n(1000000)}), []string{"big", "small", "readonly"})
+	})
+
+	t.Run("both bounds together make a range", func(t *testing.T) {
+		assertIDs(t, Filter(sums, Changed{Min: n(1), Max: n(100)}), []string{"small"})
+	})
+
+	t.Run("no bound is a no-op", func(t *testing.T) {
+		assertIDs(t, Filter(sums, Changed{}), []string{"big", "small", "readonly", "unrecorded"})
+	})
+}

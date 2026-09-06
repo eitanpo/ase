@@ -1240,3 +1240,61 @@ func TestReplyMatchesRejectsBadPattern(t *testing.T) {
 		}
 	}
 }
+
+// TestLineBoundUsageErrors pins the two ways the line bounds can be given
+// wrongly. Both fail before any filesystem access, so this test is deterministic
+// regardless of the working directory.
+func TestLineBoundUsageErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string // substring expected on stderr
+	}{
+		// Silently accepting a negative floor would return the whole listing and a
+		// negative ceiling would return none of it, so neither can be a quiet no-op.
+		{"negative floor", []string{"list", "--min-lines", "-1"}, "is negative"},
+		{"negative ceiling", []string{"list", "--max-lines", "-5"}, "is negative"},
+		// A range no session can satisfy is a mistake worth naming: an empty
+		// listing would otherwise read as "you have no such sessions".
+		{"floor above ceiling", []string{"list", "--min-lines", "100", "--max-lines", "10"}, "no session can match"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, stderr := exec(tc.args...)
+			if code != exUsage {
+				t.Errorf("exit = %d, want %d (exUsage)", code, exUsage)
+			}
+			if !strings.Contains(stderr, tc.want) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr, tc.want)
+			}
+		})
+	}
+}
+
+// TestLineBoundsSelect pins the flags end to end. The fixture session carries no
+// cost-state record, so it states no line count — which is the case that decides
+// whether the filter is honest, and the common one: a floor cannot be met and a
+// ceiling cannot be respected by a session that makes no claim.
+func TestLineBoundsSelect(t *testing.T) {
+	fixtureProject(t)
+	rows := func(t *testing.T, args ...string) int {
+		t.Helper()
+		out := captureStdout(t, func() {
+			exec(append([]string{"list", "--limit", "0", "--format", "json"}, args...)...)
+		})
+		var got []map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("stdout is not valid JSON (%v); got %q", err, out)
+		}
+		return len(got)
+	}
+	if n := rows(t); n != 1 {
+		t.Fatalf("unfiltered listing has %d sessions, want 1", n)
+	}
+	if n := rows(t, "--min-lines", "1"); n != 0 {
+		t.Errorf("--min-lines 1 matched %d sessions, want 0 on a log with no line record", n)
+	}
+	if n := rows(t, "--max-lines", "0"); n != 0 {
+		t.Errorf("--max-lines 0 matched %d sessions, want 0 — no record is not a claim of no change", n)
+	}
+}

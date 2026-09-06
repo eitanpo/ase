@@ -271,9 +271,9 @@ func anyMatch(vals []string, want string, eq func(string, string) bool) bool {
 }
 
 // Selector is one axis a listing can be narrowed on: what a session used
-// (Filters) or what it ran on (Run). Each answers the same two questions, so
-// Filter treats them alike and a further axis needs only the pair of methods
-// rather than another copy of the loop below.
+// (Filters), what it ran on (Run), or how much it changed (Changed). Each answers
+// the same two questions, so Filter treats them alike and a fourth axis needs
+// only the pair of methods rather than a fourth copy of the loop below.
 type Selector interface {
 	// Empty reports whether the axis imposes no constraint.
 	Empty() bool
@@ -309,6 +309,43 @@ func Filter(sums []model.Summary, sels ...Selector) []model.Summary {
 		}
 	}
 	return out
+}
+
+// Changed narrows a listing by how much code a session changed: the lines it
+// added plus the lines it removed, as Claude Code recorded them. Both bounds are
+// inclusive, and each is a pointer rather than a sentinel because zero is a real
+// bound — --max-lines 0 asks for the sessions that changed nothing, which no
+// "0 means unset" rule could express.
+//
+// A session whose log recorded no line counters matches neither bound. It makes
+// no claim about how much it changed, so a floor cannot be met and a ceiling
+// cannot be respected — the rule --model already follows for a session naming no
+// model. That is most sessions, so a bounded listing is a listing of the sessions
+// Claude Code kept a record for.
+type Changed struct {
+	Min *int
+	Max *int
+}
+
+// Empty reports whether no bound is set, so callers can skip filtering.
+func (c Changed) Empty() bool { return c.Min == nil && c.Max == nil }
+
+// Match reports whether s changed a number of lines within both bounds.
+func (c Changed) Match(s model.Summary) bool {
+	if c.Empty() {
+		return true
+	}
+	if s.LinesAdded == nil || s.LinesRemoved == nil {
+		return false
+	}
+	n := *s.LinesAdded + *s.LinesRemoved
+	if c.Min != nil && n < *c.Min {
+		return false
+	}
+	if c.Max != nil && n > *c.Max {
+		return false
+	}
+	return true
 }
 
 // hasAny is the identity catch-all: a skill name, a subagent type, or a command.
