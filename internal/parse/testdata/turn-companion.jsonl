@@ -1,0 +1,5 @@
+{"type":"user","timestamp":"2026-09-06T10:00:00Z","uuid":"u1","message":{"role":"user","content":"the real prompt"}}
+{"type":"assistant","timestamp":"2026-09-06T10:00:05Z","uuid":"a1","requestId":"req_A","message":{"role":"assistant","model":"claude-opus-5","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"working"}]}}
+{"type":"user","timestamp":"2026-09-06T10:00:06Z","uuid":"u2","isMeta":true,"turnCompanion":true,"message":{"role":"user","content":"Skill /coding-guidelines was loaded earlier (see the invoked-skills reminder above); this is a re-invocation."}}
+{"type":"assistant","timestamp":"2026-09-06T10:00:07Z","uuid":"a2","requestId":"req_B","message":{"role":"assistant","model":"claude-opus-5","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"still working"}]}}
+{"type":"user","timestamp":"2026-09-06T10:00:08Z","uuid":"u3","message":{"role":"user","content":"a second real prompt"}}

@@ -529,6 +529,8 @@ type entry struct {
 	// requestID names the API response this assistant entry came from, the key a
 	// token tally groups by. Empty on non-assistant entries and on older logs.
 	requestID string
+	// turnCompanion marks harness-attached material filed as a user entry.
+	turnCompanion bool
 }
 
 type block struct {
@@ -581,6 +583,10 @@ type rawEntry struct {
 	// response's usage on each, so this is what a token tally groups by. Absent on
 	// entries Claude Code composed itself and on logs predating the field.
 	RequestID string `json:"requestId"`
+	// TurnCompanion marks a user entry as material the harness attached to the
+	// turn rather than anything a person typed. Claude Code's own prompt test
+	// refuses to count an entry carrying it; written since 2.1.236.
+	TurnCompanion bool `json:"turnCompanion"`
 }
 
 // rawSnapshot is the file-history-snapshot payload. Only the keys of
@@ -641,7 +647,7 @@ func loadEntries(path string) ([]entry, error) {
 			isCompactSummary: re.IsCompactSummary, cwd: re.Cwd, entrypoint: re.Entrypoint,
 			effort:     re.Effort,
 			denialKind: re.ToolDenialKind, trackingPath: re.TrackingPath,
-			requestID: re.RequestID,
+			requestID: re.RequestID, turnCompanion: re.TurnCompanion,
 		}
 		switch re.Type {
 		case "pr-link":
@@ -1182,6 +1188,17 @@ func userPrompt(e entry) (string, bool) {
 	// entirely instead of standing in for it.
 	if e.isCompactSummary {
 		return compactSummaryPlaceholder, true
+	}
+	// Claude Code's own prompt test refuses an entry carrying this, so agentry
+	// refuses it too rather than guessing from the text — a skill body, a
+	// re-invocation notice, an image-rescaling note and a malformed-tool-call
+	// nudge are all filed as user entries and none was typed. It sits below the
+	// compaction check for the reason that check leads: a boundary stands in for
+	// the conversation it replaced and has to keep its place in the sequence.
+	// Older logs carry no marker, which is what the text markers below still
+	// cover.
+	if e.turnCompanion {
+		return "", false
 	}
 	for _, m := range injectedMarkers {
 		if strings.Contains(content, m) {

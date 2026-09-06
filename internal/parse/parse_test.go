@@ -966,3 +966,25 @@ func TestUsageKeylessEntriesEachCount(t *testing.T) {
 		t.Errorf("Output = %d, want 12; an entry with no identity has nothing to deduplicate against", got.Output)
 	}
 }
+
+// TestTurnCompanionIsNotAPrompt pins that harness-attached material filed as a
+// user entry does not become a turn. The fixture's companion entry is a skill
+// re-invocation notice — plain string content matching none of the injected
+// markers — so only Claude Code's own marker keeps it out, and without it the
+// session reads as three turns and could be titled by a notice nobody typed.
+func TestTurnCompanionIsNotAPrompt(t *testing.T) {
+	s, err := Summarize(filepath.Join("testdata", "turn-companion.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"the real prompt", "a second real prompt"}
+	if !slices.Equal(s.Prompts, want) {
+		t.Errorf("Prompts = %q, want %q", s.Prompts, want)
+	}
+	if s.NumTurns != 2 {
+		t.Errorf("NumTurns = %d, want 2", s.NumTurns)
+	}
+	if s.Title != "the real prompt" {
+		t.Errorf("Title = %q, want %q", s.Title, "the real prompt")
+	}
+}
