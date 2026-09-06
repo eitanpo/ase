@@ -163,17 +163,22 @@ func sessionUsage(jsonlPath string, entries []entry) model.Usage {
 // raised — it undercounts the tally, where an error would drop the whole
 // session from the listing over a subagent's log.
 type usageOnly struct {
-	Type    string `json:"type"`
-	Message struct {
+	Type string `json:"type"`
+	// RequestID and UUID are what usageKey groups by, so a sidecar's tokens are
+	// deduplicated on the same rule as the main log's rather than counting a
+	// delegated reply once per content block.
+	RequestID string `json:"requestId"`
+	UUID      string `json:"uuid"`
+	Message   struct {
 		Usage rawUsage `json:"usage"`
 	} `json:"message"`
 }
 
 func sidecarUsage(path string) model.Usage {
-	var u model.Usage
+	var t usageTally
 	f, err := os.Open(path)
 	if err != nil {
-		return u
+		return t.total
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -183,12 +188,12 @@ func sidecarUsage(path string) model.Usage {
 		if json.Unmarshal(sc.Bytes(), &re) != nil || re.Type != "assistant" {
 			continue
 		}
-		u.Add(model.Usage{
+		t.add(usageKey(re.RequestID, re.UUID), model.Usage{
 			Input: re.Message.Usage.Input, Output: re.Message.Usage.Output,
 			CacheRead: re.Message.Usage.CacheRead, CacheCreate: re.Message.Usage.CacheCreate,
 		})
 	}
-	return u
+	return t.total
 }
 
 // entrypoints returns every distinct entrypoint the session carries, in
@@ -521,6 +526,9 @@ type entry struct {
 	// cannot be mistaken for the session title the three title entries carry.
 	pr    model.PR
 	frame model.Artifact
+	// requestID names the API response this assistant entry came from, the key a
+	// token tally groups by. Empty on non-assistant entries and on older logs.
+	requestID string
 }
 
 type block struct {
@@ -568,6 +576,11 @@ type rawEntry struct {
 	// IsCompactSummary flags the compaction-boundary user entry. Absent in logs
 	// written before Claude Code added it, hence the text fallback in userPrompt.
 	IsCompactSummary bool `json:"isCompactSummary"`
+	// RequestID names the API response an assistant entry came from. Claude Code
+	// splits one response across an entry per content block and repeats the whole
+	// response's usage on each, so this is what a token tally groups by. Absent on
+	// entries Claude Code composed itself and on logs predating the field.
+	RequestID string `json:"requestId"`
 }
 
 // rawSnapshot is the file-history-snapshot payload. Only the keys of
@@ -628,6 +641,7 @@ func loadEntries(path string) ([]entry, error) {
 			isCompactSummary: re.IsCompactSummary, cwd: re.Cwd, entrypoint: re.Entrypoint,
 			effort:     re.Effort,
 			denialKind: re.ToolDenialKind, trackingPath: re.TrackingPath,
+			requestID: re.RequestID,
 		}
 		switch re.Type {
 		case "pr-link":
@@ -765,14 +779,55 @@ func models(entries []entry) []string {
 	})
 }
 
+// usageTally totals assistant tokens while counting each API response once.
+// Claude Code splits one response across an entry per content block and repeats
+// that response's whole usage object on every one of them, so adding the entries
+// up multiplies a reply's tokens by how many blocks it held — 1.75x to 3.11x
+// across local sessions, and enough of a per-turn variable to reorder the
+// summary as well as inflate the totals.
+type usageTally struct {
+	total model.Usage
+	seen  map[string]bool
+}
+
+// add counts one assistant entry unless its response is already counted. An
+// entry naming neither a response nor itself is counted every time: with no
+// identity there is nothing to compare against, so such an entry keeps the
+// undeduplicated behavior rather than collapsing into whichever came first.
+func (t *usageTally) add(key string, u model.Usage) {
+	if key != "" {
+		if t.seen[key] {
+			return
+		}
+		if t.seen == nil {
+			t.seen = map[string]bool{}
+		}
+		t.seen[key] = true
+	}
+	t.total.Add(u)
+}
+
+// usageKey identifies the response an assistant entry belongs to. Claude Code
+// composes some assistant entries itself and writes no requestId on them, so the
+// entry's own id stands in — which counts that entry once, exactly as it was
+// counted before. Every assistant entry of the oldest local log (2.1.205) carries
+// the field, so that fallback is for the synthetic entries and for any log older
+// than anything measured.
+func usageKey(requestID, uuid string) string {
+	if requestID != "" {
+		return requestID
+	}
+	return uuid
+}
+
 func sumUsage(entries []entry) model.Usage {
-	var u model.Usage
+	var t usageTally
 	for _, e := range entries {
 		if e.typ == "assistant" {
-			u.Add(e.usage)
+			t.add(usageKey(e.requestID, e.uuid), e.usage)
 		}
 	}
-	return u
+	return t.total
 }
 
 // ── Tool results and agent stitching ─────────────────────────────────────
@@ -1240,11 +1295,15 @@ func attachSubagent(tool *model.Tool, b block, agents, skills map[string]string,
 func turnMetrics(entries []entry, subs map[string]*subagent) (u model.Usage, tools, errs int) {
 	results := toolResultMap(entries)
 	agents := agentIDMap(entries)
+	// One tally for the turn, because a response's blocks all sit inside the turn
+	// that prompted it — a response never spans two turns, so deduplicating within
+	// the turn loses nothing and double-counting here would reorder the summary.
+	var t usageTally
 	for _, e := range entries {
 		if e.typ != "assistant" {
 			continue
 		}
-		u.Add(e.usage)
+		t.add(usageKey(e.requestID, e.uuid), e.usage)
 		for _, b := range e.blocks {
 			if b.typ != "tool_use" {
 				continue
@@ -1255,11 +1314,15 @@ func turnMetrics(entries []entry, subs map[string]*subagent) (u model.Usage, too
 			}
 			if b.name == "Agent" {
 				if id, ok := agents[b.id]; ok {
+					// Added to the running total rather than through the tally: a
+					// subagent's tokens belong to no response of this turn, and its own
+					// entries were already deduplicated inside their sidecar.
 					u.Add(totalAgentUsage(id, subs, map[string]bool{}))
 				}
 			}
 		}
 	}
+	u.Add(t.total)
 	return u, tools, errs
 }
 

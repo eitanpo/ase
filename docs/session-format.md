@@ -149,6 +149,18 @@ since the initial observation, with their meaning:
   number 0, 1, 2; the counter restarts at 0 on the next request. It orders the blocks of a
   single reply and nothing wider — it is never a running count over the session. The binary
   (2.1.263) sets it from the streaming block's own index.
+
+  **Every entry of one response repeats that response's whole `usage` object**, identically —
+  input, output and both cache counters. Summing `usage` across assistant entries therefore
+  multiplies a reply's tokens by how many blocks it held: measured over 22 local sessions the
+  inflation ran 1.75x to 3.11x, averaging 2.34x, and it varies per turn, so it distorts a
+  comparison between turns as well as a total. Group by `requestId` and take one entry per
+  group. Verified across 277 multi-entry groups in two sessions: all four counters were
+  identical within every group, so which entry you take does not matter. Group by `requestId`
+  rather than by `apiBlockIndex`: the duplication is older than the index field, measurable
+  back to 2.1.206, while `requestId` is on every assistant entry of the oldest local log
+  (2.1.205). What `requestId` does not cover is the `<synthetic>` entries Claude Code composes
+  itself, which carry none — those are one entry each and can be keyed by `uuid`.
 - `turnCompanion` (`user` entries, always `true` when present) — the entry carries material
   the harness attached to the turn rather than anything a person typed: a loaded skill's
   body, a re-invocation notice for a skill loaded earlier, a note about an image's scaling, a

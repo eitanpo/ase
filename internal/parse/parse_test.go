@@ -912,3 +912,57 @@ func TestSummarizeReplies(t *testing.T) {
 		}
 	})
 }
+
+// TestUsageCountsEachResponseOnce pins the rule that separates a token tally
+// from a line count. Claude Code splits one API response across an assistant
+// entry per content block and writes that response's whole usage object on every
+// one of them, so the obvious implementation — add up every assistant entry —
+// reports a reply three times over. The fixture's first response spans three
+// entries carrying identical usage; a regression reads 300 output tokens where
+// the response produced 100.
+func TestUsageCountsEachResponseOnce(t *testing.T) {
+	path := filepath.Join("testdata", "blocked-usage.jsonl")
+	s, err := Summarize(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Main thread: req_A once (10/100/40/4), req_B once (1/7/2/0), and the
+	// synthetic entry that names no response, keyed by its own uuid (3/0/0/0).
+	// The sidecar's two entries are one response (1000/2000/500/300).
+	want := model.Usage{Input: 1014, Output: 2107, CacheRead: 542, CacheCreate: 304}
+	if s.Usage != want {
+		t.Errorf("Usage = %+v, want %+v", s.Usage, want)
+	}
+
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Meta.Usage != want {
+		t.Errorf("Meta.Usage = %+v, want %+v; the render path must count responses the way a listing does", sess.Meta.Usage, want)
+	}
+	// The per-turn tally is the surface that orders the summary, so it dedupes
+	// too — a turn inflated by its block count would sort above turns that cost
+	// more. Subagents are excluded here: this fixture spawns none.
+	if len(sess.Turns) != 1 {
+		t.Fatalf("Turns = %d, want 1", len(sess.Turns))
+	}
+	wantTurn := model.Usage{Input: 14, Output: 107, CacheRead: 42, CacheCreate: 4}
+	if sess.Turns[0].Usage != wantTurn {
+		t.Errorf("turn Usage = %+v, want %+v", sess.Turns[0].Usage, wantTurn)
+	}
+}
+
+// TestUsageKeylessEntriesEachCount covers the case the fixtures cannot reach: an
+// assistant entry naming neither a response nor itself. Deduplicating on an empty
+// key would collapse every such entry into the first, silently undercounting a
+// log old enough to carry neither field.
+func TestUsageKeylessEntriesEachCount(t *testing.T) {
+	entries := []entry{
+		{typ: "assistant", usage: model.Usage{Output: 5}},
+		{typ: "assistant", usage: model.Usage{Output: 7}},
+	}
+	if got := sumUsage(entries); got.Output != 12 {
+		t.Errorf("Output = %d, want 12; an entry with no identity has nothing to deduplicate against", got.Output)
+	}
+}
