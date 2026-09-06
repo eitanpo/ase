@@ -1,16 +1,29 @@
 # Claude Code session log format
 
-Reverse-engineered from real logs (observed 2026-05-27; last re-verified 2026-08-07 against
-892 logs spanning Claude Code 2.1.195 through 2.1.224). **Not an official spec** —
+Reverse-engineered from real logs (observed 2026-05-27; last re-verified 2026-09-06 against
+1,834 logs spanning Claude Code 2.1.195 through 2.1.263). **Not an official spec** —
 Claude Code may change it without notice; re-verify against live files before relying
 on a detail here. `internal/parse` and `internal/locate` encode this format.
+
+**The shipped binary is a second source, and it settles what the logs only hint at.** Claude
+Code installs as one large binary with its JavaScript bundle embedded as plain text, so
+`grep -ao 'PATTERN.\{0,200\}' "$(readlink -f "$(which claude)")"` prints the code that writes
+the log — the field names it emits, the values it validates, and the table it keys entry
+types by. Use it for the question a corpus sweep cannot answer: whether a type missing from
+local logs was removed or was simply never written on this machine. Two mechanics: give the
+pattern a window on one side only, because a two-sided window exceeds the complexity limit
+of the `grep` on this machine and errors instead of matching; and label every fact drawn
+this way with the build it came from, since the next release rewrites the bundle. Facts
+below marked 2.1.263 come from that build's binary rather than from a log.
 
 Re-verify with `scripts/schema-scan.sh` (see [DEVELOPMENT.md](../DEVELOPMENT.md)). It reports
 every field, entry type, `system` subtype, content-block type and `entrypoint` value in the
 local logs, how often each occurs, the build range that wrote it, and whether this file
 already names it; `--new` narrows to the ones it does not. Run it before trusting anything
 below that a change would depend on — the counts and version ranges quoted here are from the
-2026-08-07 sweep and age from the day they were written.
+2026-09-06 sweep and age from the day they were written. The scan reads local logs only, so
+it cannot report a type Claude Code writes elsewhere; the roster under
+[Entry types](#entry-types) covers those, and it comes from the binary.
 
 ## Location and naming
 
@@ -35,8 +48,9 @@ below that a change would depend on — the counts and version ranges quoted her
 - One file per session: `<project>/<session-uuid>.jsonl`. The session id is a full UUID.
 - Subagent sidecars: `<project>/<session-uuid>/subagents/agent-<id>.jsonl`, each with an
   `agent-<id>.meta.json` sibling. A sidecar is itself session-shaped JSONL. Sidecars
-  dominate the tree — 635 of the 892 files in the 2026-08-07 sweep — so any count over
-  `*.jsonl` is counting mostly subagents unless it excludes `*/subagents/*`.
+  dominate the tree — 1,346 of the 1,834 files in the 2026-09-06 sweep, against 488 main
+  session logs — so any count over `*.jsonl` is counting mostly subagents unless it excludes
+  `*/subagents/*`.
 - **A git worktree is a separate project.** Its absolute path slugs like any other, so
   `~/.claude/projects/` holds one folder per worktree
   (`-Users-me--central-worktrees-pr-1`) and a repo's sessions are split across them. Nothing
@@ -61,8 +75,9 @@ below that a change would depend on — the counts and version ranges quoted her
 Each line is one JSON event. Lines can be large — tool results are stored inline with
 full content. Skip a malformed line rather than failing on it: a reader that aborts at the
 first one silently drops every later line in that session, which reads as a short session
-rather than as an error. The 2026-08-07 sweep found none in 892 files, so treat this as a
-guard against a condition earlier revisions recorded, not as one you should expect to hit.
+rather than as an error. The 2026-09-06 sweep found none in 391,612 lines across 1,834
+files, so treat this as a guard against a condition earlier revisions recorded, not as one
+you should expect to hit.
 
 Common top-level fields: `type`, `timestamp` (RFC3339), `message`, plus context such as
 `cwd`, `gitBranch`, `sessionId`, `uuid`, `parentUuid`, `version`, `isSidechain`.
@@ -71,8 +86,8 @@ The set grows over time and is additive — Claude Code adds fields without remo
 existing ones, so unknown fields are expected and the parser ignores them. Fields seen
 since the initial observation, with their meaning:
 
-- `entrypoint` — where the session was started: `cli` (85,378 entries), `sdk-cli`
-  (15,817), or `claude-desktop` (14,376). The desktop app writes ordinary logs to the same
+- `entrypoint` — where the session was started: `cli` (276,842 entries), `sdk-cli`
+  (19,931), or `claude-desktop` (16,073). The desktop app writes ordinary logs to the same
   `~/.claude/projects/` tree, so nothing but this field separates a desktop session from a
   terminal one. It ships its own bundled Claude Code build, which lags the CLI's, so a
   desktop session's `version` can be older than anything the terminal wrote that week.
@@ -81,26 +96,29 @@ since the initial observation, with their meaning:
   every entry of the resulting session carried `entrypoint: "sdk-cli"`, with no SDK involved.
   Anything headless lands here — a shell script, a hook, a CI step, another agent shelling
   out. Do not read it as evidence that SDK code exists.
-  Per session rather than per entry, over the 251 local main sessions: `cli` 108, `sdk-cli`
-  89, `claude-desktop` 52, and 2 carrying two values.
+  Per session rather than per entry, over the 488 local main sessions: `cli` 222, `sdk-cli`
+  205, `claude-desktop` 59, and 2 carrying two values.
 - **A session can carry two entrypoints**, when it is started in one client and resumed from
   another. Both local cases are one contiguous block of each value, never interleaved
   (`claude-desktop`×710 then `cli`×1267; `sdk-cli`×7 then `cli`×7). The second is an exact
   tie, so a majority rule has no answer — order is the only usable signal.
-- **`promptSource` does not identify the entrypoint.** Both `claude-desktop` (363 prompts)
-  and `sdk-cli` (130) carry `promptSource: "sdk"`, so `sdk` there means "not typed at a
+- **`promptSource` does not identify the entrypoint.** Both `claude-desktop` (393 prompts)
+  and `sdk-cli` (266) carry `promptSource: "sdk"`, so `sdk` there means "not typed at a
   terminal" and covers both non-terminal clients. Only `cli` sessions ever show `typed`
-  (1,344), `system` (433), `suggestion_accepted` (125), or `queued` (3).
+  (2,757), `system` (1,004), `suggestion_accepted` (259), or `queued` (18) — the split still
+  held on the 2026-09-06 sweep, with no value crossing to a second entrypoint.
 - `userType` — `external` for human-driven sessions.
 - `promptSource` (`user` entries) — how the prompt arrived: `typed`, `sdk`, `system`,
   `queued`, or `suggestion_accepted`. Earlier revisions of this file said the field was
   absent for typed prompts and present only for SDK ones; that is wrong — `typed` is an
-  explicit value, seen 1,313 times.
-- `origin` (`user` entries) — `{"kind": …}`, one of `human` (1,777), `task-notification`
-  (450), or `coordinator` (29). Present only on prompt-bearing `user` entries, never on the
-  ones carrying a `tool_result`. **A positive signal only**: in one recent session, 13 of 16
-  string-content `user` entries carried it, so its absence does not mean a prompt was
-  injected and the marker heuristic below is still required.
+  explicit value, seen 2,757 times.
+- `origin` (`user` entries) — `{"kind": …}`, one of `human` (3,451), `task-notification`
+  (1,061), `coordinator` (73), `auto-continuation` (8), or `peer` (4). The last two are new
+  since the previous sweep and rare enough that no purpose is inferable from the entries
+  carrying them. Present only on prompt-bearing `user` entries, never on the ones carrying a
+  `tool_result`. **A positive signal only**: in one recent session, 13 of 16 string-content
+  `user` entries carried it, so its absence does not mean a prompt was injected and the
+  marker heuristic below is still required.
 - `attributionSkill` (assistant entries) — names the **inline** skill whose execution
   produced this main-chain turn (see Subagent stitching). Absent on turns not run under
   a skill.
@@ -124,12 +142,49 @@ since the initial observation, with their meaning:
   in-`message` `tool_result` block.
 - `sourceToolAssistantUUID` / `sourceToolUseID` — link a synthetic `user` entry back to
   the assistant turn / tool call that generated it.
-- `system` entries carry `subtype` — `stop_hook_summary` (2,125), `turn_duration` (1,868),
-  `away_summary` (624), `local_command` (76), `compact_boundary` (59), `api_error` (10),
-  `informational` (2), `model_refusal_fallback` (1) — and sometimes `level` (`info`,
-  `suggestion`). `stop_hook_summary` entries also carry `hasOutput`, `stopReason`,
-  `preventedContinuation` and `toolUseID`; `turn_duration` carries `durationMs` and
-  `messageCount`.
+- `apiBlockIndex` (assistant entries, since 2.1.258) — which content block of one API
+  response this entry carries. Claude Code writes one assistant entry per block, so a reply
+  holding a thought and two tool calls becomes three entries that share a `requestId` and
+  number 0, 1, 2; the counter restarts at 0 on the next request. It orders the blocks of a
+  single reply and nothing wider — it is never a running count over the session. The binary
+  (2.1.263) sets it from the streaming block's own index.
+- `turnCompanion` (`user` entries, always `true` when present) — the entry carries material
+  the harness attached to the turn rather than anything a person typed: a loaded skill's
+  body, a re-invocation notice for a skill loaded earlier, a note about an image's scaling, a
+  nudge after a malformed tool call. **Claude Code's own test for "is this a user prompt"
+  rejects it** — the binary (2.1.263) counts an entry only when `turnCompanion !== true` — so
+  this is the authoritative form of the question the marker heuristic under
+  [User entries](#user-entries-typed-vs-injected) answers by matching text. Seen on 358
+  entries across 148 files since 2.1.236, every one also carrying `isMeta: true`.
+- Queue fields on `user` entries: `queuePriority` (`later` in all 18 local entries),
+  `queueSkipAttachments`, and `queueOrigin` — an object naming what enqueued the prompt,
+  e.g. `{"kind":"task-notification","source":"artifact-watch-lifecycle","slug":…}`.
+- `quotaLimits` (assistant entries, 17 occurrences) — the rate-limit state at a refusal:
+  `status`, `rateLimitType` (`five_hour`), `resetsAt` (epoch seconds), `overageStatus`,
+  `overageDisabledReason`, `isUsingOverage`, `unifiedRateLimitFallbackAvailable`. Every local
+  occurrence rides a `<synthetic>` assistant entry — the "you've hit your limit" text Claude
+  Code composes itself — so it annotates one of the `<synthetic>` entries described under
+  [message](#message) rather than a real reply.
+- `truncatedAfterOutput` (assistant entries, 1 occurrence) — too rare to characterize.
+- `scheduledTaskId` / `scheduledFireId` (`user` entries) — the scheduled task and the
+  individual firing that produced this prompt. They pair with the `scheduled_task_fire`
+  `system` entry below.
+- `system` entries carry `subtype` — `stop_hook_summary` (4,271), `turn_duration` (4,017),
+  `away_summary` (984), `local_command` (156), `compact_boundary` (137), `informational`
+  (23), `api_error` (10), `scheduled_task_fire` (10), `model_refusal_fallback` (1) — and
+  sometimes `level` (`info`, `suggestion`). `stop_hook_summary` entries also carry
+  `hasOutput`, `stopReason`, `preventedContinuation` and `toolUseID`; `turn_duration` carries
+  `durationMs` and `messageCount`.
+
+  `scheduled_task_fire` is a wake-up from a scheduled task or a `/loop`: `taskId`, `taskKind`
+  and `cronKind` (both `loop` in every local entry), the `cron` expression, and the `prompt`
+  being re-fired. Where the loop had nothing to report it also carries `noOpStreak`,
+  `streakStartedAt`, and `foldedUuids` — the earlier quiet wake-ups this one folds together,
+  so a reader counting entries sees one line where the session ran several.
+
+  **`away_summary` stopped being written after 2.1.238** — 984 entries, none later than
+  2026-08-22, in a corpus that runs to 2.1.263. Rarity explains a recent gap for the error
+  subtypes (`api_error`, `model_refusal_fallback`); it does not explain this one.
 - Hook metadata: `hookInfos`, `hookErrors`, `hookCount`, `hookAdditionalContext`.
 - `slug` — a human-readable session handle (`bubbly-honking-blanket`), constant across a
   session's assistant entries. A second name for a session besides its UUID.
@@ -150,23 +205,58 @@ since the initial observation, with their meaning:
   unexplained: `snapshot` / `isSnapshotUpdate` (`file-history-snapshot`), `backup` /
   `trackingPath` / `snapshotMessageId` (`file-history-delta`), `agentName`
   (`agent-name`), `agentSetting` (`agent-setting`), `lastPrompt` / `leafUuid`
-  (`last-prompt`), `operation` / `content` (`queue-operation`), `relocatedCwd`
+  (`last-prompt`), `operation` / `content` / `reason` (`queue-operation`), `relocatedCwd`
   (`relocated`), `worktreeSession` (`worktree-state`), `prNumber` / `prUrl` /
-  `prRepository` (`pr-link`), `frameUrl` / `path` / `title` (`frame-link`),
-  `parentSessionId` / `parentLastUuid` / `contextLength` (`fork-context-ref`),
-  `aiTitle` (`ai-title`), `customTitle` (`custom-title`), `permissionMode`
-  (`permission-mode`), `mode` (`mode`).
+  `prRepository` (`pr-link`), `frameUrl` / `path` / `title` / `artifactCount`
+  (`frame-link`), `parentSessionId` / `parentLastUuid` / `contextLength`
+  (`fork-context-ref`), `aiTitle` (`ai-title`), `customTitle` (`custom-title`),
+  `permissionMode` (`permission-mode`), `mode` (`mode`), `atis` (`atis-latch`),
+  `totalCostUSD` / `totalDuration` / `totalAPIDuration` /
+  `totalAPIDurationWithoutRetries` / `totalToolDuration` / `totalLinesAdded` /
+  `totalLinesRemoved` / `startTime` / `modelUsage` / `hasUnknownModelCost`
+  (`cost-state`), and `v` / `artifacts` / `accountUuid` (the two artifact bookkeeping
+  types).
 - Fields observed but not yet explained, each rare enough that no purpose was inferable:
   `pendingBackgroundAgentCount`, `classifierMetaLines`, `sessionKind`, `source`, `mcpMeta`.
   They are listed so the next sweep reports them as known-unexplained rather than as new.
 
 ### Entry types
 
-Nineteen types across the 892-log sweep. **Only `assistant` and `user` carry renderable
-content**; ignore the rest — but ignore by skipping what you do not recognize, never by
-matching a closed list, because this list has grown at every re-verification.
+Twenty-three types across the 1,834-log sweep, and the binary names fifteen more that no
+local log holds. **Only `assistant` and `user` carry renderable content**; ignore the rest —
+but ignore by skipping what you do not recognize, never by matching a closed list, because
+this list has grown at every re-verification.
 
-Content: `assistant` (62,114 entries), `user` (35,857).
+Content: `assistant` (137,056 entries), `user` (81,701).
+
+**The full roster is in the binary, grouped by what Claude Code does with each type.** At
+2.1.263 it keys every type it can write to one of four retention classes, and a type the
+table omits defaults to `accumulate`:
+
+| Class | Meaning | Types |
+|:--|:--|:--|
+| `transcript` | the conversation itself, chained by `uuid` | `user`, `assistant`, `system`, `attachment` |
+| `boundary-cleared` | dropped for everything before the last compaction boundary | `progress`, `file-history-snapshot`, `file-history-delta`, `last-prompt`, `continued-in`, `marble-origami-commit`, `marble-origami-snapshot`, `marble-origami-reset` |
+| `accumulate` | every entry kept | `content-replacement`, `fork-context-ref`, `frame-link`, `artifact-comment-monitor` |
+| `last-wins` | only the newest entry of the type matters | `summary`, `custom-title`, `ended-by-model`, `ai-title`, `tag`, `relocated`, `agent-name`, `agent-color`, `agent-setting`, `pr-link`, `artifact-autoreact-ledger`, `bridge-session`, `history-suppression`, `attribution-snapshot`, `mode`, `permission-mode`, `isolation-latch`, `atis-latch`, `worktree-state`, `cost-state`, `queue-operation`, `observer-ref` |
+
+Fifteen of those 38 names never appear in a local log: `progress`, `continued-in`, the three
+`marble-origami-*` types, `content-replacement`, `summary`, `ended-by-model`, `tag`,
+`agent-color`, `bridge-session`, `history-suppression`, `attribution-snapshot`,
+`isolation-latch`, and `observer-ref`. Take the roster as the set of names a reader can meet
+and as Claude Code's own grouping of them — not as two other things it looks like:
+
+- **The classes describe a rewrite Claude Code plans, not the file on disk.** The routine
+  holding the table walks a log and builds a keep-or-drop plan per line, dropping transcript
+  lines before the last compaction boundary and hoisting the surviving `last-wins` metadata
+  onto the boundary line. No local log shows that happening: all 56 sessions carrying a
+  compaction boundary still hold their pre-boundary lines, 239 to 2,671 of them. So a
+  compacted session's history is still readable, as [Session continuation and
+  forking](#session-continuation-and-forking) says.
+- **`last-wins` is not a reading rule.** `pr-link` sits in that class, and one session can
+  name several distinct pull requests — a reader keeping only the newest entry reports one of
+  them and loses the rest. Deduplicate by the thing each entry names instead, as the
+  `pr-link` and `frame-link` notes below do.
 
 Session metadata. Each is a `sessionId` plus one or two fields of its own, and **none
 carries a `timestamp` or a `version`** — nothing in the entry dates it, so attribute it to
@@ -179,6 +269,13 @@ the build and time of the surrounding lines.
 - `permission-mode` — the permission mode in effect (`auto`, …). Records the mode and never
   a per-call outcome; for that read `toolDenialKind`.
 - `last-prompt` — `lastPrompt` plus `leafUuid`, the anchor a resume attaches to.
+- `atis-latch` — a `sessionId` plus `atis`, a printable-ASCII string (the binary at 2.1.263
+  validates it against `/^[\x21-\x7e]*$/`) latched at the entry a branch is taken from. Its
+  meaning is **unknown**: all 6,234 local entries across 187 files carry the empty string, so
+  nothing here says what a non-empty one would mean. The binary writes it beside an
+  `isolation-latch` entry, which carries a `side` and appears in no local log. Present since
+  2.1.234 and in every recent session, so any survey meets it immediately — and it holds
+  nothing a transcript reader can use.
 
 Session events, each recording something the session did. Most carry a `timestamp`;
 `relocated`, `worktree-state` and `fork-context-ref` do not, so they cannot be ordered
@@ -186,15 +283,24 @@ against the turns around them by their own content.
 
 - `pr-link` — a pull request it opened: `prNumber`, `prUrl`, `prRepository`.
 - `frame-link` — an artifact it published: local `path`, the `frameUrl` on claude.ai, and a
-  `title`. `title` is optional — 21 of 66 entries omit it; the other three fields were
-  present on every entry observed.
+  `title`. `title` is optional — 21 of the 135 entries that name a URL omit it.
+
+  **Two shapes share this type, and the newer one names no artifact at all.** The count-only
+  shape is `{type, artifactCount, sessionId, timestamp}` — no path, no URL, no title — and it
+  is now the common one: 478 of the 613 local entries, in 6 sessions, since 2.1.237. An
+  earlier revision of this file said the other three fields were present on every entry
+  observed; that is no longer true. A reader keyed on the URL drops these by construction,
+  which is what agentry's "a record naming nothing is dropped" rule in `dedupeOutputs` does;
+  a reader that treats the type's presence as an artifact reports hundreds of phantoms.
 
   **Both are re-recorded, not written once.** Claude Code re-emits the entry on later
-  turns of the same session, so the entry count is not the thing count: 963 `pr-link`
-  entries across 42 sessions named 67 session-and-pull-request pairs (56 distinct pull
-  requests, a few of them opened from two sessions), and 66 `frame-link` entries across 6
-  sessions named 7 pairs (5 distinct artifacts) — verified 2026-08-09 over 250 main logs.
-  Reading them without deduplication reports one pull request dozens of times.
+  turns of the same session, so the entry count is not the thing count: on 2026-09-06,
+  3,331 `pr-link` entries across 70 sessions named 146 session-and-pull-request pairs (135
+  distinct pull requests), and 613 `frame-link` entries across 16 sessions named 25 pairs
+  (13 distinct artifacts). The ratio has widened since the 2026-08-09 measurement — then
+  963 `pr-link` entries named 67 pairs — so read the entries as a stream of restatements
+  rather than a list, whatever the counts are on the day. Reading them without
+  deduplication reports one pull request dozens of times.
 
   **Dedupe on the URL, not the local path.** Repeated `frame-link` entries for one
   artifact keep a constant `frameUrl` while `path` changes, observed where a page was
@@ -212,8 +318,10 @@ against the turns around them by their own content.
 - `worktree-state` — it entered a git worktree. Nested `worktreeSession` carries
   `originalCwd`, `worktreePath`, `worktreeName`, `worktreeBranch`, `originalBranch`, and
   `originalHeadCommit`.
-- `queue-operation` — a queued prompt moving: `operation` is `enqueue`, `dequeue`, or
-  `remove`.
+- `queue-operation` — a queued prompt moving: `operation` is `enqueue` (2,493), `dequeue`
+  (1,681), `remove` (799), or `popAll` (1). A `remove` sometimes says why in `reason` —
+  `absorbed_mid_turn` (174) where the turn already running swallowed the prompt,
+  `delivered_to_agent` (35) where another agent took it.
 - `attachment`, `file-history-snapshot`, `file-history-delta` — attachments, whole-file
   snapshots, and per-file deltas (`trackingPath`, `snapshotMessageId`, nested `backup`).
   `file-history-delta` is new since 2.1.211.
@@ -239,20 +347,72 @@ against the turns around them by their own content.
   exactly one tracked path had no matching `Edit`/`Write` target, and it was this
   case — meaning the tracked record adds almost nothing over reading tool
   arguments, and what it does add may be a path that never existed.
-- `system` — carries `subtype`; the eight observed values are listed under Common
+- `system` — carries `subtype`; the nine observed values are listed under Common
   top-level fields above.
+- `cost-state` — the session's running totals, rewritten as it goes: `totalCostUSD`,
+  `totalDuration`, `totalAPIDuration`, `totalAPIDurationWithoutRetries`,
+  `totalToolDuration` (milliseconds), `totalLinesAdded`, `totalLinesRemoved`, `startTime`
+  (epoch milliseconds), `hasUnknownModelCost`, and `modelUsage` keyed by model id — each
+  model holding `inputTokens`, `outputTokens`, `cacheReadInputTokens`,
+  `cacheCreationInputTokens`, `webSearchRequests` and `costUSD`. Since 2.1.241, in 42 local
+  sessions. **It is cumulative, so read the last entry and never a sum of them** — the
+  largest local value, 124.85 USD, is a session total and not one turn's cost. Whether it
+  counts a subagent's tokens is **unverified**; agentry sums `usage` across the sidecars
+  instead of reading this.
+- `artifact-comment-monitor` and `artifact-autoreact-ledger` — bookkeeping for artifacts the
+  session watches, not for artifacts it published. The monitor names which are `armed` for
+  comment replies, with a `writtenAtMs` and a `title`; the ledger records `savedAt`,
+  `stampHighWater`, `everBaselined`, `everHadThreads`, `turnTimestamps` and `threads` per
+  artifact. Both carry a schema version `v` and an `artifacts` object keyed by artifact id,
+  and the ledger also carries `accountUuid`. For what a session actually published, read
+  `frame-link`.
 - `fork-context-ref` — appears only inside subagent sidecars; see Subagent stitching.
 
-Named by earlier revisions of this file but **never observed** in 892 logs: `progress`.
-Either it was removed or it was never real; do not write code that expects it.
+`progress` is real and simply not written here. It is still in the binary's own type table
+at 2.1.263, in the `boundary-cleared` class, and still absent from all 1,834 local logs.
+Earlier revisions of this file concluded it had been removed or was never real — the two
+guesses a corpus sweep alone can produce, and reading the binary rules out both.
 
 The last entry's type is not an end-of-session marker — it is whatever happened last.
 There is no reliable in-file "session complete" signal.
 
-`ai-title` entries carry a top-level `aiTitle` string — Claude Code's own session
-summary, rewritten as the session evolves, so multiple appear and the last is the
-current one (`sessionId` names the session). It is not renderable content, but the
-session listing (`agentry list`) uses the latest `aiTitle` as the session's title.
+`ai-title` entries carry a top-level `aiTitle` string — Claude Code's own one-line summary
+of the session, with `sessionId` naming the session. **It is written once and then
+re-recorded, never revised**: across the 163 local sessions holding 9,133 of these entries,
+not one carries two different values, so the many copies restate a single string and the
+last one says nothing the first did not. An earlier revision of this file called it
+"rewritten as the session evolves", which the generator's own conditions rule out — it runs
+at most once per session (below). It is not renderable content, but the session listing
+(`agentry list`) uses the latest `aiTitle` as the session's title.
+
+**It is alive on 2.1.263, and a named session never gets one.** No local session whose
+newest build is 2.1.260 or above carries an `ai-title`, which reads like a removal until you
+notice that every recent session here was launched with a name. Two probe sessions run on
+2026-09-06 settle it: an unnamed session wrote `ai-title: "Pong"` after its single turn, and
+the same prompt under `--name probe-named` wrote `custom-title` and `agent-name` and no
+`ai-title` at all.
+
+The generator's conditions are in the binary (2.1.263), and it runs only when every one of
+them holds:
+
+- **No title is set in any of the three senses** — no custom title, no already-generated
+  title, and no agent name. So `--name` at launch suppresses generation from the start,
+  rather than stopping later appends the way a mid-session rename does.
+- **The feature is not switched off** by a setting.
+- **The session was not resumed.** A resume marks the attempt as already made, so a resumed
+  session never generates a title even when it has none.
+- **The first prompt is ordinary text**, not a slash command.
+
+It fires **once, right after the first turn** — a session does not have to grow long to earn
+one. And it is a terminal-session feature: `ai-title` appears in no `sdk-cli` session (0 of
+205 local) and no `claude-desktop` session (0 of 59), the desktop app keeping its title in
+its own JSON file instead.
+
+**To re-run the probe**, drive a real terminal session rather than `claude -p`, which
+generates nothing because the generator lives in the terminal UI. Run `script -q /dev/null
+claude` with the prompt piped in, and pace the input: the TUI reads the pty in raw mode, so
+Enter is a carriage return and a bare newline only inserts a line break — send `\n` and the
+prompt sits unsent in the input box while the probe times out.
 
 `custom-title` entries carry a top-level `customTitle` string — the name you give a
 session by renaming it in Claude Code. It overrides `aiTitle` in the listing (see the
@@ -265,12 +425,15 @@ under [User entries](#user-entries-typed-vs-injected)).
 
 `agent-name` entries carry a top-level `agentName` string — the name you set with `--name`
 at launch or `/rename` in session, and the one Claude Code's statusline shows. It is a
-**third** title source, and it is not the same mechanism as `custom-title`: renaming
-usually writes both, with the same value, but a session named at launch can carry an
-`agent-name` and no `custom-title` at all. A title ladder that reads only `customTitle`
-therefore falls through to the generated `aiTitle` for that session and displays a name the
-user did not choose. Of the 12 sessions carrying an `agent-name`, 11 also carry a matching
-`custom-title`, which is why the gap stays invisible.
+**third** title source, and it is not the same mechanism as `custom-title`, though the two
+now travel together: all 45 local sessions carrying an `agent-name` also carry a matching
+`custom-title`, including a session named at launch with `--name` on 2.1.263, which wrote
+both. An earlier revision of this file reported one session of twelve with an `agent-name`
+and no `custom-title`, and warned that a title ladder reading only `customTitle` would fall
+through to a generated `aiTitle` and show a name the user did not choose. That
+counterexample is no longer in the corpus, so treat agentry's `agentName` rung as defensive
+rather than as a case the logs currently exercise — and read the pairing as re-measured on
+2026-09-06, not as a guarantee.
 
 ### message
 
@@ -347,12 +510,14 @@ the markers below — it would read as a typed prompt — but it carries
 being continued from a previous conversation…"), which is Claude Code's wording and can
 change; keep the sentence only as a fallback for logs written before the flag existed.
 
-Two more structured fields answer part of the general question and neither answers all of
-it, so the marker heuristic below remains the working rule. `origin.kind == "human"` positively marks a
-typed prompt, and `promptSource` distinguishes `typed` / `sdk` / `queued` /
-`suggestion_accepted` from `system`; but `origin` is absent from a minority of
-string-content `user` entries, so its absence proves nothing. Use them to confirm, not to
-decide.
+Three more structured fields answer part of the general question and none answers all of it,
+so the marker heuristic below remains the working rule. `origin.kind == "human"` positively
+marks a typed prompt, `promptSource` distinguishes `typed` / `sdk` / `queued` /
+`suggestion_accepted` from `system`, and `turnCompanion: true` positively marks an injected
+one — Claude Code's own prompt test (2.1.263) refuses to count an entry carrying it. But
+`origin` is absent from a minority of string-content `user` entries, and `turnCompanion` is
+written only for material attached to a turn, so neither absence proves anything. Use them
+to confirm, not to decide.
 
 A `user` entry's string content is a human-typed prompt **unless** it is
 system-injected. Injected markers include `<local-command-caveat>`, `<bash-input>`,
@@ -374,7 +539,8 @@ of its first turns, and writes `NAME` back as a `custom-title` on the previous s
 why the title ladder skips a `/clear` turn rather than titling the new session with it. Note: a command can also appear as **plain string content** (no
 `<command-name>` wrapper, e.g. a literal `/commit push`), which renders verbatim with its
 single slash. Array-of-`text` user content is also injected (e.g. skill bodies), not a
-typed prompt.
+typed prompt; since 2.1.236 those entries also carry `turnCompanion: true`, which is the
+signal to prefer wherever it is present.
 
 ## Subagent stitching
 
