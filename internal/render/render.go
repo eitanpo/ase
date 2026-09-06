@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/eitanpo/agentry/internal/entrypoint"
 	"github.com/eitanpo/agentry/internal/model"
+	"github.com/eitanpo/agentry/internal/spend"
 	"github.com/eitanpo/agentry/internal/trail"
 	"github.com/muesli/termenv"
 )
@@ -184,14 +185,14 @@ func (r *renderer) header(s *model.Session) string {
 		counts = append(counts, plural(m.NumSubagents, "subagent"))
 	}
 
-	tokens := fmt.Sprintf("Tokens: %s in / %s out", fmtTok(m.Usage.Input), fmtTok(m.Usage.Output))
-	if cacheIn := m.Usage.Input + m.Usage.CacheRead + m.Usage.CacheCreate; cacheIn > 0 {
-		tokens += fmt.Sprintf("  ·  cache %.0f%%", float64(m.Usage.CacheRead)/float64(cacheIn)*100)
-	}
+	// What the session spent, in the wording the listing's cost channel also
+	// prints — one phrasing, so a spend read off a rendered session and one read
+	// off a listing cannot differ.
+	spent := spend.Line(m.Usage, m.CostUSD, m.LinesAdded, m.LinesRemoved)
 
 	body := r.claude.Render(title) + "\n" +
 		strings.Join(counts, " · ") + "\n" +
-		r.dim.Render(tokens)
+		r.dim.Render(spent)
 	return r.box(body) + "\n"
 }
 
@@ -698,7 +699,7 @@ func (r *renderer) summary(s *model.Session) string {
 			pct = float64(rw.tok) / float64(total) * 100
 		}
 		b.WriteString(fmt.Sprintf("  %5.1f%%  %8s  %5d  %d. %s\n",
-			pct, fmtTok(rw.tok), rw.tools, rw.n, truncate(rw.label, max(r.opts.Width-30, 20))))
+			pct, spend.Tokens(rw.tok), rw.tools, rw.n, truncate(rw.label, max(r.opts.Width-30, 20))))
 	}
 	if rest := len(rows) - limit; rest > 0 {
 		b.WriteString(r.dim.Render(fmt.Sprintf("  …  (%s)\n", plural(rest, "more step"))))
@@ -752,16 +753,6 @@ func fmtToolDuration(start, end time.Time) string {
 		return fmt.Sprintf("%dm%02ds", mins, rem)
 	}
 	return fmt.Sprintf("%dh%02dm", mins/60, mins%60)
-}
-
-func fmtTok(n int) string {
-	switch {
-	case n < 1000:
-		return fmt.Sprintf("%d", n)
-	case n < 10000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprintf("%.0fk", float64(n)/1000)
 }
 
 func plural(n int, noun string) string {

@@ -1139,6 +1139,19 @@ func TestRunFlags(t *testing.T) {
 		if !strings.Contains(out, "claude-opus-4-7") {
 			t.Errorf("--include all missing the model: %q", out)
 		}
+		// The cost channel's token half is unconditional, so its label is what
+		// proves the channel ran at all — this fixture's log records no dollar
+		// total, and a check for one would pass on a channel that never fired.
+		if !strings.Contains(out, "Tokens:") {
+			t.Errorf("--include all missing the cost channel: %q", out)
+		}
+	})
+
+	t.Run("--include cost states the spend in the text table", func(t *testing.T) {
+		out := captureStdout(t, func() { exec("list", "--include", "cost") })
+		if !strings.Contains(out, "Tokens:") {
+			t.Errorf("output missing the token tally: %q", out)
+		}
 	})
 }
 

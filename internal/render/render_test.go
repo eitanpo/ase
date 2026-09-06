@@ -87,20 +87,6 @@ func minimalSession() *model.Session {
 	}
 }
 
-func TestFmtTok(t *testing.T) {
-	tests := []struct {
-		n    int
-		want string
-	}{
-		{0, "0"}, {999, "999"}, {1000, "1.0k"}, {1500, "1.5k"}, {9999, "10.0k"}, {15000, "15k"},
-	}
-	for _, tt := range tests {
-		if got := fmtTok(tt.n); got != tt.want {
-			t.Errorf("fmtTok(%d) = %q, want %q", tt.n, got, tt.want)
-		}
-	}
-}
-
 func TestPlural(t *testing.T) {
 	tests := []struct {
 		n    int
@@ -786,6 +772,44 @@ func TestOutputsSection(t *testing.T) {
 		}
 		if !strings.Contains(plain, "https://github.com/eitanpo/central/pull/14") {
 			t.Errorf("a pull request's visible text is its URL: %q", plain)
+		}
+	})
+}
+
+// TestHeaderCost pins that the rendered header states what the session cost, and
+// that it says nothing where the log recorded no cost — the rule the model and
+// effort beside it already follow.
+func TestHeaderCost(t *testing.T) {
+	sess := minimalSession()
+	cost, added, removed := 17.254517250000003, 342, 8
+	sess.Meta.Usage = model.Usage{Input: 236, Output: 111499, CacheRead: 17633669}
+	sess.Meta.CostUSD = &cost
+	sess.Meta.LinesAdded, sess.Meta.LinesRemoved = &added, &removed
+
+	var b strings.Builder
+	if err := Session(&b, sess, Options{Width: 100, Color: false}); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "Tokens: 236 in / 111k out") {
+		t.Errorf("header missing the token tally: %q", out)
+	}
+	if !strings.Contains(out, "$17.25") {
+		t.Errorf("header missing the cost: %q", out)
+	}
+	if !strings.Contains(out, "+342/-8") {
+		t.Errorf("header missing the lines changed: %q", out)
+	}
+
+	t.Run("no cost recorded, no dollar figure", func(t *testing.T) {
+		sess := minimalSession()
+		sess.Meta.Usage = model.Usage{Input: 236, Output: 4}
+		var b strings.Builder
+		if err := Session(&b, sess, Options{Width: 100, Color: false}); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(b.String(), "$") {
+			t.Errorf("a session with no cost record must show no dollar figure: %q", b.String())
 		}
 	})
 }

@@ -173,7 +173,7 @@ func runList(cmd *cobra.Command, noColor *bool) error {
 	until, _ := cmd.Flags().GetString("until")
 	include, _ := cmd.Flags().GetString("include")
 
-	var showPrompts, showTools, showFiles, showModel, showOutputs bool
+	var showPrompts, showTools, showFiles, showModel, showCost, showOutputs bool
 	for _, tok := range strings.Split(include, ",") {
 		switch tok = strings.TrimSpace(tok); tok {
 		case "": // empty entries (e.g. unset flag) contribute nothing
@@ -185,11 +185,13 @@ func runList(cmd *cobra.Command, noColor *bool) error {
 			showFiles = true
 		case "model":
 			showModel = true
+		case "cost":
+			showCost = true
 		case "outputs":
 			showOutputs = true
 		case "all":
 			showPrompts, showTools, showFiles = true, true, true
-			showModel, showOutputs = true, true
+			showModel, showCost, showOutputs = true, true, true
 		default:
 			if g := nearest(tok, includeNames); g != "" {
 				return usageErr("--include: unknown channel %q — did you mean %q?", tok, g)
@@ -302,7 +304,7 @@ func runList(cmd *cobra.Command, noColor *bool) error {
 	color, width := terminal(*noColor)
 	if err := list.Render(os.Stdout, selected, list.Options{
 		Width: width, Color: color, Prompts: showPrompts, Tools: showTools, Files: showFiles,
-		Model: showModel, Outputs: showOutputs,
+		Model: showModel, Cost: showCost, Outputs: showOutputs,
 	}); err != nil {
 		return &exitError{code: 1, err: err}
 	}

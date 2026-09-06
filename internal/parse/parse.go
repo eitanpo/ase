@@ -44,6 +44,7 @@ func Load(jsonlPath string) (*model.Session, error) {
 	eps := entrypoints(entries)
 	effs := efforts(entries)
 	ms := models(entries)
+	cost, added, removed := recordedTotals(entries)
 
 	sess := &model.Session{
 		Meta: model.Meta{
@@ -55,6 +56,9 @@ func Load(jsonlPath string) (*model.Session, error) {
 			Entrypoints:  manyOrNone(eps),
 			Effort:       lastOf(effs),
 			Efforts:      manyOrNone(effs),
+			CostUSD:      cost,
+			LinesAdded:   added,
+			LinesRemoved: removed,
 			PRs:          sessionPRs(entries),
 			Artifacts:    sessionArtifacts(entries),
 		},
@@ -95,6 +99,7 @@ func Summarize(jsonlPath string) (model.Summary, error) {
 	effs := efforts(entries)
 	ms := models(entries)
 	cwd := sessionCwd(entries)
+	cost, added, removed := recordedTotals(entries)
 	var prompts []string
 	for _, tn := range turns {
 		if !isClearCmd(tn.prompt) {
@@ -119,15 +124,18 @@ func Summarize(jsonlPath string) (model.Summary, error) {
 		// The last value is the session's, matching the last-activity time the
 		// listing orders by. The full list is kept only when it diverges, so a
 		// single-entrypoint session serializes one field rather than two.
-		Entrypoint:  lastOf(eps),
-		Entrypoints: manyOrNone(eps),
-		Model:       lastOf(ms),
-		Models:      manyOrNone(ms),
-		Effort:      lastOf(effs),
-		Efforts:     manyOrNone(effs),
-		Usage:       sessionUsage(jsonlPath, entries),
-		PRs:         sessionPRs(entries),
-		Artifacts:   sessionArtifacts(entries),
+		Entrypoint:   lastOf(eps),
+		Entrypoints:  manyOrNone(eps),
+		Model:        lastOf(ms),
+		Models:       manyOrNone(ms),
+		Effort:       lastOf(effs),
+		Efforts:      manyOrNone(effs),
+		Usage:        sessionUsage(jsonlPath, entries),
+		CostUSD:      cost,
+		LinesAdded:   added,
+		LinesRemoved: removed,
+		PRs:          sessionPRs(entries),
+		Artifacts:    sessionArtifacts(entries),
 	}, nil
 }
 
@@ -531,6 +539,9 @@ type entry struct {
 	requestID string
 	// turnCompanion marks harness-attached material filed as a user entry.
 	turnCompanion bool
+	// cost is the running totals a cost-state entry carries. Nil on every other
+	// entry type, which is what makes "the log recorded none" a single check.
+	cost *costState
 }
 
 type block struct {
@@ -587,6 +598,13 @@ type rawEntry struct {
 	// turn rather than anything a person typed. Claude Code's own prompt test
 	// refuses to count an entry carrying it; written since 2.1.236.
 	TurnCompanion bool `json:"turnCompanion"`
+	// TotalCostUSD, TotalLinesAdded and TotalLinesRemoved are the session's totals
+	// so far, all three on a cost-state entry. Every local record carries all
+	// three, so their presence is the entry's presence and costState reads them
+	// together rather than deciding each one's absence separately.
+	TotalCostUSD      *float64 `json:"totalCostUSD"`
+	TotalLinesAdded   *int     `json:"totalLinesAdded"`
+	TotalLinesRemoved *int     `json:"totalLinesRemoved"`
 }
 
 // rawSnapshot is the file-history-snapshot payload. Only the keys of
@@ -648,6 +666,18 @@ func loadEntries(path string) ([]entry, error) {
 			effort:     re.Effort,
 			denialKind: re.ToolDenialKind, trackingPath: re.TrackingPath,
 			requestID: re.RequestID, turnCompanion: re.TurnCompanion,
+		}
+		if re.Type == "cost-state" {
+			e.cost = &costState{}
+			if re.TotalCostUSD != nil {
+				e.cost.costUSD = *re.TotalCostUSD
+			}
+			if re.TotalLinesAdded != nil {
+				e.cost.linesAdded = *re.TotalLinesAdded
+			}
+			if re.TotalLinesRemoved != nil {
+				e.cost.linesRemoved = *re.TotalLinesRemoved
+			}
 		}
 		switch re.Type {
 		case "pr-link":
@@ -937,6 +967,43 @@ func sessionFiles(entries []entry, cwd string) []string {
 		}
 	}
 	return out
+}
+
+// recordedTotals expands a session's cost-state record into the three model
+// fields that carry it. All three are present together or all nil, which is the
+// record's own presence rule: a caller cannot be handed a line count from a log
+// that recorded no cost, because one entry carries both.
+func recordedTotals(entries []entry) (costUSD *float64, linesAdded, linesRemoved *int) {
+	cs := sessionCostState(entries)
+	if cs == nil {
+		return nil, nil, nil
+	}
+	return &cs.costUSD, &cs.linesAdded, &cs.linesRemoved
+}
+
+// costState is what Claude Code recorded a session as having amounted to: its
+// dollar cost and the lines it added and removed. A missing counter reads zero
+// rather than being tracked separately, because every local record carries all
+// three — so the record either exists or it does not.
+type costState struct {
+	costUSD      float64
+	linesAdded   int
+	linesRemoved int
+}
+
+// sessionCostState is the session's last cost-state record. Claude Code rewrites
+// the entry as the session runs and each one holds the totals so far, so the last
+// is the answer and adding them up would multiply it. Nil when the log carries no
+// such entry — every session before Claude Code 2.1.241 and plenty since — which
+// is not a claim the session was free or changed nothing.
+func sessionCostState(entries []entry) *costState {
+	var last *costState
+	for _, e := range entries {
+		if e.cost != nil {
+			last = e.cost
+		}
+	}
+	return last
 }
 
 // sessionPRs and sessionArtifacts are what the session produced beyond its own

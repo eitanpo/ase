@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/eitanpo/agentry/internal/entrypoint"
 	"github.com/eitanpo/agentry/internal/model"
+	"github.com/eitanpo/agentry/internal/spend"
 	"github.com/eitanpo/agentry/internal/trail"
 	"github.com/muesli/termenv"
 )
@@ -34,6 +35,7 @@ type Options struct {
 	Tools   bool // --include tools: break down each session's tool calls under its row
 	Files   bool // --include files: list each file the session modified
 	Model   bool // --include model: name the model and reasoning effort the session ran on
+	Cost    bool // --include cost: name what the session spent, in tokens and dollars
 	Outputs bool // --include outputs: list the PRs the session opened and the artifacts it published
 }
 
@@ -656,7 +658,7 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 	}
 	// A session shows a detail block (rail + closing rule) when any --include
 	// channel is on; the channels share one block.
-	block := opts.Prompts || opts.Tools || opts.Files || opts.Model || opts.Outputs
+	block := opts.Prompts || opts.Tools || opts.Files || opts.Model || opts.Cost || opts.Outputs
 	var b strings.Builder
 	rows := arrange(sums)
 	for idx, r := range rows {
@@ -700,6 +702,14 @@ func Render(w io.Writer, sums []model.Summary, opts Options) error {
 			if line := runLine(s); line != "" {
 				fmt.Fprintf(&b, "%s%s\n", rail, dim.Render(truncate(line, promptW)))
 			}
+		}
+		// What it spent sits beside what it ran on, for the same reason: both
+		// describe the session, where every channel below them enumerates its
+		// contents. The wording is the rendered header's, built by the one helper
+		// both call, so the two surfaces cannot report one session's spend
+		// differently.
+		if opts.Cost {
+			fmt.Fprintf(&b, "%s%s\n", rail, dim.Render(truncate(spend.Line(s.Usage, s.CostUSD, s.LinesAdded, s.LinesRemoved), promptW)))
 		}
 		if opts.Prompts {
 			for _, p := range s.Prompts {

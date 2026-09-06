@@ -967,6 +967,63 @@ func TestUsageKeylessEntriesEachCount(t *testing.T) {
 	}
 }
 
+// TestSessionCostReadsLastRecord pins that a session's cost is the last cost-state
+// entry rather than a sum of them. Claude Code rewrites the entry as the session
+// runs and each one carries the running total, so adding them up multiplies the
+// answer — the fixture's two entries sum to 3.25 against a true total of 2.75.
+func TestSessionCostReadsLastRecord(t *testing.T) {
+	path := filepath.Join("testdata", "cost-state.jsonl")
+	s, err := Summarize(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CostUSD == nil {
+		t.Fatal("CostUSD = nil, want 2.75")
+	}
+	if *s.CostUSD != 2.75 {
+		t.Errorf("CostUSD = %v, want 2.75 (the last record, not the sum of both)", *s.CostUSD)
+	}
+	// The line counters ride the same entry, so the last record settles them too:
+	// the fixture's first record says 3 added and its second says 9, and a reader
+	// that summed the entries would report 12 lines the session never wrote.
+	if s.LinesAdded == nil || s.LinesRemoved == nil {
+		t.Fatalf("LinesAdded/LinesRemoved = %v/%v, want 9/4", s.LinesAdded, s.LinesRemoved)
+	}
+	if *s.LinesAdded != 9 || *s.LinesRemoved != 4 {
+		t.Errorf("lines = +%d/-%d, want +9/-4 (the last record, not the sum of both)", *s.LinesAdded, *s.LinesRemoved)
+	}
+
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Meta.CostUSD == nil || *sess.Meta.CostUSD != *s.CostUSD {
+		t.Errorf("Meta.CostUSD = %v, want %v; a listing and a render must agree", sess.Meta.CostUSD, *s.CostUSD)
+	}
+	if sess.Meta.LinesAdded == nil || *sess.Meta.LinesAdded != *s.LinesAdded {
+		t.Errorf("Meta.LinesAdded = %v, want %v; a listing and a render must agree", sess.Meta.LinesAdded, *s.LinesAdded)
+	}
+}
+
+// TestSessionCostAbsentWithoutRecord pins that a log carrying no cost record
+// reports no cost rather than zero. A session Claude Code wrote no total for is
+// not a session that was free, and a zero would be indistinguishable from a
+// measurement once a caller aggregates the field.
+func TestSessionCostAbsentWithoutRecord(t *testing.T) {
+	s, err := Summarize(filepath.Join("testdata", "sample.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CostUSD != nil {
+		t.Errorf("CostUSD = %v, want nil on a log with no cost-state entry", *s.CostUSD)
+	}
+	// The line counters share the cost's record, so they share its absence. A zero
+	// here would read as a session that changed nothing, which this log does not say.
+	if s.LinesAdded != nil || s.LinesRemoved != nil {
+		t.Errorf("lines = %v/%v, want nil/nil on a log with no cost-state entry", s.LinesAdded, s.LinesRemoved)
+	}
+}
+
 // TestTurnCompanionIsNotAPrompt pins that harness-attached material filed as a
 // user entry does not become a turn. The fixture's companion entry is a skill
 // re-invocation notice — plain string content matching none of the injected

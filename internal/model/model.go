@@ -29,12 +29,22 @@ type Meta struct {
 	// only when it changed mid-session. Empty on a session predating the field
 	// (about half of them), which is not a claim that effort was any particular
 	// value — the log simply does not say.
-	Effort       string    `json:"effort,omitempty"`
-	Efforts      []string  `json:"efforts,omitempty"`
-	Start        time.Time `json:"start"`
-	End          time.Time `json:"end"`
-	Usage        Usage     `json:"usage"`
-	NumSubagents int       `json:"numSubagents"`
+	Effort  string    `json:"effort,omitempty"`
+	Efforts []string  `json:"efforts,omitempty"`
+	Start   time.Time `json:"start"`
+	End     time.Time `json:"end"`
+	Usage   Usage     `json:"usage"`
+	// CostUSD is what Claude Code recorded the session as having cost, mirroring
+	// the Summary field of the same name. A pointer because a free session and a
+	// log that records no cost are different facts and both would marshal as zero;
+	// nil is omitted, so a caller aggregating the field sees the gap.
+	CostUSD *float64 `json:"costUSD,omitempty"`
+	// LinesAdded and LinesRemoved mirror the Summary fields of those names. They
+	// come from the same record CostUSD does, so all three are present together or
+	// all absent.
+	LinesAdded   *int `json:"linesAdded,omitempty"`
+	LinesRemoved *int `json:"linesRemoved,omitempty"`
+	NumSubagents int  `json:"numSubagents"`
 	// Entrypoint and Entrypoints mirror the Summary fields of the same names,
 	// resolved identically, so the render path and the listing never disagree
 	// about where one session ran.
@@ -107,6 +117,21 @@ type Summary struct {
 	// and one read off a rendered session agree. Paired with Model, it is what
 	// lets a single cross-project listing answer what a model cost.
 	Usage Usage `json:"usage"`
+	// CostUSD is Claude Code's own running dollar total for the session, read from
+	// the log's last record of it rather than derived from Usage — agentry knows no
+	// prices. Nil on a session whose log carries none (anything before Claude Code
+	// 2.1.241), which is not a claim it was free. Whether Claude Code's total
+	// already counts a subagent's spend is not something the log states, so unlike
+	// Usage this covers the main log alone and makes no claim beyond it.
+	CostUSD *float64 `json:"costUSD,omitempty"`
+	// LinesAdded and LinesRemoved are how much code the session changed, from the
+	// same record CostUSD comes from — so all three are present together, and a
+	// zero here is a session that changed nothing rather than one nothing was
+	// recorded for. Unlike CostUSD this is known to reach delegated work: a local
+	// session whose main thread made no edit call, and whose subagents made 29,
+	// recorded 22 lines added.
+	LinesAdded   *int `json:"linesAdded,omitempty"`
+	LinesRemoved *int `json:"linesRemoved,omitempty"`
 	// PRs and Artifacts are what the session produced beyond its own transcript,
 	// each deduplicated in first-seen order (Claude Code re-records both on later
 	// turns). They come from entries Claude Code writes for the session as a whole,

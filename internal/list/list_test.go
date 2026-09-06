@@ -1578,3 +1578,58 @@ func TestRenderWorktreeCollision(t *testing.T) {
 		t.Errorf("three worktrees must render three distinct cells, got %v\n%s", cells, b.String())
 	}
 }
+
+// TestRenderIncludeCost pins the channel that reports what a session spent, and
+// the distinction the dollar half turns on: a session Claude Code recorded no
+// cost for shows the token half alone rather than a zero a reader would take for
+// a measurement.
+func TestRenderIncludeCost(t *testing.T) {
+	cost, added, removed := 35.0712, 342, 8
+	sums := []model.Summary{{ID: "s1", Title: "do work",
+		Usage:      model.Usage{Input: 494, Output: 211000, CacheRead: 900000, CacheCreate: 30000},
+		CostUSD:    &cost,
+		LinesAdded: &added, LinesRemoved: &removed}}
+
+	var off strings.Builder
+	if err := Render(&off, sums, Options{Width: 120, Color: false}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(off.String(), "$35.07") {
+		t.Errorf("the cost should be hidden without the channel: %q", off.String())
+	}
+
+	var on strings.Builder
+	if err := Render(&on, sums, Options{Width: 120, Color: false, Cost: true}); err != nil {
+		t.Fatal(err)
+	}
+	out := on.String()
+	// The rendered header's own phrasing, built by the helper both paths call, so
+	// one session's spend cannot read two ways.
+	if !strings.Contains(out, "Tokens: 494 in / 211k out") {
+		t.Errorf("output missing the token tally: %q", out)
+	}
+	if !strings.Contains(out, "$35.07") {
+		t.Errorf("output missing the dollar total: %q", out)
+	}
+	if !strings.Contains(out, "+342/-8") {
+		t.Errorf("output missing the lines changed: %q", out)
+	}
+	if !strings.Contains(out, "╰─") {
+		t.Errorf("session block not closed by a rule: %q", out)
+	}
+
+	t.Run("a session with no recorded cost shows tokens alone", func(t *testing.T) {
+		var b strings.Builder
+		sums := []model.Summary{{ID: "s1", Title: "do work", Usage: model.Usage{Input: 5, Output: 9}}}
+		if err := Render(&b, sums, Options{Width: 120, Color: false, Cost: true}); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		if !strings.Contains(out, "Tokens: 5 in / 9 out") {
+			t.Errorf("output missing the token tally: %q", out)
+		}
+		if strings.Contains(out, "$") {
+			t.Errorf("a session with no cost record must show no dollar figure: %q", out)
+		}
+	})
+}

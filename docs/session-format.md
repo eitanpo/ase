@@ -374,6 +374,14 @@ against the turns around them by their own content.
   largest local value, 124.85 USD, is a session total and not one turn's cost. Whether it
   counts a subagent's tokens is **unverified**; agentry sums `usage` across the sidecars
   instead of reading this.
+
+  `totalLinesAdded` / `totalLinesRemoved` are present on every local record, so their
+  presence is the record's. Two things are settled about what they count. They **do** reach
+  delegated work: a session whose main thread made no `Edit`/`Write` call and whose subagents
+  made 29 recorded 22 lines added. They do **not** count a file written through the shell: a
+  session with 115 shell writes, `cat > f <<EOF` heredocs included, and no edit call recorded
+  zero both ways. Two thirds of local records read `0`/`0`, which is what a read-only session
+  looks like rather than a gap.
 - `artifact-comment-monitor` and `artifact-autoreact-ledger` — bookkeeping for artifacts the
   session watches, not for artifacts it published. The monitor names which are `armed` for
   comment replies, with a `writtenAtMs` and a `title`; the ledger records `savedAt`,
