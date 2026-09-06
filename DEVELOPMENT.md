@@ -101,8 +101,9 @@ subtype, content-block type, `entrypoint` value) reports the occurrence count, t
 the Claude Code version range that wrote it, when it was last seen, and whether the doc mentions
 it. Three targets wrap it: `make schema-scan` for the full report, `make schema-scan-new`
 for only the elements the doc has never named, and `make schema-scan-test` for the
-scanner's own checks. The script also takes `--kind type` to narrow to one category, and
-`--root` / `--doc` to point at something other than the defaults.
+scanner's own checks. The script also takes `--kind type` to narrow to one category,
+`--root` / `--doc` to point at something other than the defaults, and `--binary` to read
+the entry-type roster from a file other than the `claude` on PATH.
 
 It is deliberately **not** part of `make build`: the sweep reads about 500 MB and takes
 minutes, so it belongs to touching the parser or the format doc, not to every compile. The
@@ -120,6 +121,15 @@ lies rather than fails:
 - **Derives "documented" from the doc itself**, by collecting its backticked tokens rather than
   from a second list that would have to be kept in lockstep with the prose and silently would
   not be.
+- **Reads the entry-type roster out of the installed binary**, which carries its JavaScript
+  bundle as plain text including the table that assigns every type it knows a retention class.
+  The logs answer what Claude Code wrote here and cannot answer what it can write, so a type
+  added upstream is invisible to a log-only sweep until some local session happens to produce
+  one. The report closes with what that comparison found: how many types the binary knows, which
+  of them no local log has written, which of those the doc has never named, and — the mirror
+  case — which types the logs hold that the table omits. When the roster cannot be read, the
+  scan says so on stderr instead of printing no block, because a missing block reads exactly
+  like a build whose types the logs already cover.
 
 Run it serially. An earlier parallel version wrote long lines from several `jq` processes into
 one pipe, and the interleaved writes produced plausible-looking garbage values

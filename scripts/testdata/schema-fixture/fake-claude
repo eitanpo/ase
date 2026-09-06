@@ -1,0 +1,8 @@
+Stands in for the Claude Code binary when testing scripts/schema-scan.sh. The real
+one is a native executable with its JavaScript bundle embedded as text; the scan
+only ever greps it, so a text file carrying the same object literal exercises the
+same path. user, assistant and ai-title are types the fixture log produces;
+widget-ledger is one it never produces and the fixture doc never names; system is
+deliberately absent from the table, so the fixture log holds a type the table omits.
+
+var Xyz={user:"transcript",assistant:"transcript","ai-title":"last-wins","widget-ledger":"last-wins"};

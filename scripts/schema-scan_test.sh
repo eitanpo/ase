@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Pin the four schema-scan.sh behaviors that fail silently rather than loudly:
-# a malformed line must be skipped and counted, a version-less entry must inherit
-# its file's build, an element the doc omits must read NEW, and a row whose
-# timestamp is absent must keep its remaining columns in place.
+# Pin the schema-scan.sh behaviors that fail silently rather than loudly: a malformed
+# line must be skipped and counted, a version-less entry must inherit its file's build,
+# an element the doc omits must read NEW, a row whose timestamp is absent must keep its
+# remaining columns in place, and the entry-type roster read from the binary must name
+# what no log wrote — or say why it could not be read.
 #
 # Usage: scripts/schema-scan_test.sh      Exit: 0 all pass · 1 a check failed.
 set -uo pipefail
@@ -10,7 +11,8 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out=$("$here/schema-scan.sh" \
 	--root "$here/testdata/schema-fixture" \
-	--doc "$here/testdata/schema-fixture/doc.md" 2>&1) || {
+	--doc "$here/testdata/schema-fixture/doc.md" \
+	--binary "$here/testdata/schema-fixture/fake-claude" 2>&1) || {
 	echo "FAIL scanner exited non-zero"
 	echo "$out"
 	exit 1
@@ -55,6 +57,36 @@ check "element absent from the newest build is dated" '$1 == "type" && $2 == "us
 # A token the doc names but the corpus never produced has to surface somewhere, or a
 # removed element stays documented forever.
 check "documented-but-unobserved token reported" '/ghost-entry/'
+
+# The fake binary's table names widget-ledger, which the fixture log never writes. This
+# is the whole point of reading the binary: an entry type exists upstream before any
+# local session produces one, and the log-only survey cannot see it at all.
+check "roster names a type no log wrote" '/widget-ledger\(last-wins\)/'
+
+# ai-title is in both the table and the log, so it must not be listed as unwritten —
+# a roster that named every type it knows would bury the ones that matter.
+check "roster omits a type the logs do write" '/entry types, [0-9]+ written by no local log/ && $0 !~ /ai-title\(/'
+
+# The doc names ai-title and not widget-ledger, so the second line must isolate the
+# case that needs action: known to Claude Code, absent from the logs, absent from the doc.
+check "roster isolates the undocumented unwritten type" '/named by no doc:.*widget-ledger/'
+
+# The fixture log carries a system entry and the table omits the type, which is the
+# mirror gap: Claude Code writes a type its own table never listed.
+check "type absent from the table reported" '/absent from the table.*system/'
+
+# A roster that cannot be read must say so. Silence here is indistinguishable from a
+# build whose types the logs already cover, which is what would let an addition pass.
+noroster=$("$here/schema-scan.sh" \
+	--root "$here/testdata/schema-fixture" \
+	--doc "$here/testdata/schema-fixture/doc.md" \
+	--binary "$here/testdata/schema-fixture/doc.md" 2>&1)
+if grep -q 'no entry-type roster in' <<<"$noroster" && ! grep -q 'binary roster ' <<<"$noroster"; then
+	echo "ok   unreadable roster reported rather than skipped"
+else
+	echo "FAIL unreadable roster reported rather than skipped"
+	fails=$((fails + 1))
+fi
 
 [ "$fails" -eq 0 ] || {
 	echo

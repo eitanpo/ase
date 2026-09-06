@@ -21,9 +21,10 @@ every field, entry type, `system` subtype, content-block type and `entrypoint` v
 local logs, how often each occurs, the build range that wrote it, and whether this file
 already names it; `--new` narrows to the ones it does not. Run it before trusting anything
 below that a change would depend on — the counts and version ranges quoted here are from the
-2026-09-06 sweep and age from the day they were written. The scan reads local logs only, so
-it cannot report a type Claude Code writes elsewhere; the roster under
-[Entry types](#entry-types) covers those, and it comes from the binary.
+2026-09-06 sweep and age from the day they were written. The scan closes with the entry-type
+roster it reads out of the installed binary, so a type Claude Code knows and no local session
+has written is named there rather than left to a hand sweep; the same roster is reproduced
+under [Entry types](#entry-types).
 
 ## Location and naming
 
@@ -231,7 +232,9 @@ Content: `assistant` (137,056 entries), `user` (81,701).
 
 **The full roster is in the binary, grouped by what Claude Code does with each type.** At
 2.1.263 it keys every type it can write to one of four retention classes, and a type the
-table omits defaults to `accumulate`:
+table omits defaults to `accumulate`. `scripts/schema-scan.sh` re-reads this table on every
+run and reports what it finds against the local logs, so the copy below is a snapshot to read
+rather than the thing to re-derive by hand:
 
 | Class | Meaning | Types |
 |:--|:--|:--|
