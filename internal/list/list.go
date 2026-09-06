@@ -270,15 +270,41 @@ func anyMatch(vals []string, want string, eq func(string, string) bool) bool {
 	return false
 }
 
-// FilterByRun keeps only the summaries matching r, preserving input order. A
-// no-op (returns the input) when r is empty.
-func FilterByRun(sums []model.Summary, r Run) []model.Summary {
-	if r.Empty() {
+// Selector is one axis a listing can be narrowed on: what a session used
+// (Filters) or what it ran on (Run). Each answers the same two questions, so
+// Filter treats them alike and a further axis needs only the pair of methods
+// rather than another copy of the loop below.
+type Selector interface {
+	// Empty reports whether the axis imposes no constraint.
+	Empty() bool
+	// Match reports whether s satisfies every constraint set on this axis.
+	Match(model.Summary) bool
+}
+
+// Filter keeps the summaries matching every selector, preserving input order.
+// Selectors imposing no constraint are skipped, so a caller passes all of them
+// unconditionally and pays nothing on a listing given no filter flags — where
+// every selector is empty the input slice is returned rather than copied.
+func Filter(sums []model.Summary, sels ...Selector) []model.Summary {
+	active := make([]Selector, 0, len(sels))
+	for _, sel := range sels {
+		if !sel.Empty() {
+			active = append(active, sel)
+		}
+	}
+	if len(active) == 0 {
 		return sums
 	}
 	out := make([]model.Summary, 0, len(sums))
 	for _, s := range sums {
-		if r.Match(s) {
+		keep := true
+		for _, sel := range active {
+			if !sel.Match(s) {
+				keep = false
+				break
+			}
+		}
+		if keep {
 			out = append(out, s)
 		}
 	}
@@ -360,21 +386,6 @@ func hasReply(replies []string, re *regexp.Regexp) bool {
 		}
 	}
 	return false
-}
-
-// FilterByTools keeps only the summaries matching f, preserving input order. A
-// no-op (returns the input) when f is empty.
-func FilterByTools(sums []model.Summary, f Filters) []model.Summary {
-	if f.Empty() {
-		return sums
-	}
-	out := make([]model.Summary, 0, len(sums))
-	for _, s := range sums {
-		if f.Match(s) {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func hasTool(stats []model.ToolStat, name string) bool {

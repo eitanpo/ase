@@ -286,7 +286,7 @@ func runList(cmd *cobra.Command, noColor *bool) error {
 	// caller will actually see: capping first and filtering after would return
 	// fewer than N rows and give no hint why.
 	visible := list.FilterByFrom(sums, from)
-	selected := list.Select(list.FilterByTools(list.FilterByRun(visible, run), filters), sinceT, untilT, limit)
+	selected := list.Select(list.Filter(visible, filters, run), sinceT, untilT, limit)
 	// A default that empties the listing must say so. Hidden non-interactive
 	// sessions are the one exclusion the caller did not ask for, so without this
 	// an empty result is indistinguishable from a project holding nothing.

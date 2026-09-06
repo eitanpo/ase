@@ -722,7 +722,7 @@ func TestFilterByTools(t *testing.T) {
 			{Tool: "Agent", Identity: "researcher", Count: 3},
 		}, Commands: nil},
 	}
-	match := func(f Filters) []string { return ids(FilterByTools(sums, f)) }
+	match := func(f Filters) []string { return ids(Filter(sums, f)) }
 	eq := func(got, want []string) bool {
 		if len(got) != len(want) {
 			return false
@@ -780,7 +780,7 @@ func TestFilterByTools(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := match(c.f); !eq(got, c.want) {
-				t.Errorf("FilterByTools(%+v) = %v, want %v", c.f, got, c.want)
+				t.Errorf("Filter(%+v) = %v, want %v", c.f, got, c.want)
 			}
 		})
 	}
@@ -862,7 +862,7 @@ func TestFilterByFile(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := ids(FilterByTools(sums, Filters{Used: Criteria{File: c.file}}))
+			got := ids(Filter(sums, Filters{Used: Criteria{File: c.file}}))
 			if len(got) != len(c.want) {
 				t.Fatalf("--used-file %q = %v, want %v", c.file, got, c.want)
 			}
@@ -876,7 +876,7 @@ func TestFilterByFile(t *testing.T) {
 
 	// A file axis is not the identity axis: --used stays a skill/agent/command
 	// catch-all, so widening it here would change what existing calls return.
-	if got := ids(FilterByTools(sums, Filters{Used: Criteria{Any: "PRODUCT.md"}})); len(got) != 0 {
+	if got := ids(Filter(sums, Filters{Used: Criteria{Any: "PRODUCT.md"}})); len(got) != 0 {
 		t.Errorf("--used should not match files, got %v", got)
 	}
 }
@@ -1012,45 +1012,45 @@ func TestFilterByRun(t *testing.T) {
 	}
 
 	t.Run("model is a substring, so a family and a release both work", func(t *testing.T) {
-		assertIDs(t, FilterByRun(sums, Run{Model: "opus"}), []string{"opus5", "opus48", "switched"})
-		assertIDs(t, FilterByRun(sums, Run{Model: "opus-5"}), []string{"opus5", "switched"})
+		assertIDs(t, Filter(sums, Run{Model: "opus"}), []string{"opus5", "opus48", "switched"})
+		assertIDs(t, Filter(sums, Run{Model: "opus-5"}), []string{"opus5", "switched"})
 	})
 
 	t.Run("model matching is case-insensitive", func(t *testing.T) {
-		assertIDs(t, FilterByRun(sums, Run{Model: "OPUS-4-8"}), []string{"opus48"})
+		assertIDs(t, Filter(sums, Run{Model: "OPUS-4-8"}), []string{"opus48"})
 	})
 
 	t.Run("a session that switched matches either model it ran", func(t *testing.T) {
 		// It really did run both; a test seeing only the resolved value would deny
 		// the session ever ran the first one.
-		assertIDs(t, FilterByRun(sums, Run{Model: "sonnet"}), []string{"sonnet", "switched"})
+		assertIDs(t, Filter(sums, Run{Model: "sonnet"}), []string{"sonnet", "switched"})
 	})
 
 	t.Run("effort is exact, so high does not swallow xhigh", func(t *testing.T) {
 		// The levels nest as substrings. A substring rule here would make
 		// --effort high a silent superset rather than the answer asked for.
-		assertIDs(t, FilterByRun(sums, Run{Effort: "high"}), []string{"opus5"})
-		assertIDs(t, FilterByRun(sums, Run{Effort: "xhigh"}), []string{"opus48"})
+		assertIDs(t, Filter(sums, Run{Effort: "high"}), []string{"opus5"})
+		assertIDs(t, Filter(sums, Run{Effort: "xhigh"}), []string{"opus48"})
 	})
 
 	t.Run("effort matching is case-insensitive", func(t *testing.T) {
-		assertIDs(t, FilterByRun(sums, Run{Effort: "XHigh"}), []string{"opus48"})
+		assertIDs(t, Filter(sums, Run{Effort: "XHigh"}), []string{"opus48"})
 	})
 
 	t.Run("both fields AND", func(t *testing.T) {
-		assertIDs(t, FilterByRun(sums, Run{Model: "opus", Effort: "xhigh"}), []string{"opus48"})
+		assertIDs(t, Filter(sums, Run{Model: "opus", Effort: "xhigh"}), []string{"opus48"})
 	})
 
 	t.Run("an unknown value is an empty listing, not an error", func(t *testing.T) {
 		// The level set grows without notice, so agentry does not validate against
 		// it: a level it has not heard of must return nothing, not reject the call.
-		if got := FilterByRun(sums, Run{Effort: "ultra"}); len(got) != 0 {
+		if got := Filter(sums, Run{Effort: "ultra"}); len(got) != 0 {
 			t.Errorf("got %v, want no sessions", ids(got))
 		}
 	})
 
 	t.Run("an empty selector is a no-op", func(t *testing.T) {
-		assertIDs(t, FilterByRun(sums, Run{}), ids(sums))
+		assertIDs(t, Filter(sums, Run{}), ids(sums))
 	})
 }
 
@@ -1130,7 +1130,7 @@ func TestFilterByOutputs(t *testing.T) {
 	}
 	matching := func(t *testing.T, c Criteria) []model.Summary {
 		t.Helper()
-		return FilterByTools(sums, Filters{Used: c})
+		return Filter(sums, Filters{Used: c})
 	}
 
 	t.Run("a pull request matches by repository, by number, and by url", func(t *testing.T) {
@@ -1165,7 +1165,7 @@ func TestFilterByOutputs(t *testing.T) {
 	})
 
 	t.Run("the negated form keeps exactly what the positive drops", func(t *testing.T) {
-		kept := FilterByTools(sums, Filters{NotUsed: Criteria{PR: "central"}})
+		kept := Filter(sums, Filters{NotUsed: Criteria{PR: "central"}})
 		assertIDs(t, kept, []string{"devex", "untitled", "quiet"})
 	})
 
@@ -1276,7 +1276,7 @@ func TestFilterByReply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("compile %q: %v", pattern, err)
 		}
-		return FilterByTools(sums, Filters{Used: Criteria{Reply: re}})
+		return Filter(sums, Filters{Used: Criteria{Reply: re}})
 	}
 
 	t.Run("a line-anchored pattern separates the block from a mention of it", func(t *testing.T) {
@@ -1305,7 +1305,7 @@ func TestFilterByReply(t *testing.T) {
 
 	t.Run("the negated form keeps exactly what the positive drops", func(t *testing.T) {
 		re := regexp.MustCompile(`(?i)(?m)^\*{0,2}Learnings\b`)
-		kept := FilterByTools(sums, Filters{NotUsed: Criteria{Reply: re}})
+		kept := Filter(sums, Filters{NotUsed: Criteria{Reply: re}})
 		assertIDs(t, kept, []string{"mention", "praise", "silent"})
 	})
 
@@ -1322,7 +1322,7 @@ func TestFilterByReply(t *testing.T) {
 		if !(Criteria{}).empty() {
 			t.Error("Criteria{} with a nil Reply is not empty")
 		}
-		assertIDs(t, FilterByTools(sums, Filters{}), ids(sums))
+		assertIDs(t, Filter(sums, Filters{}), ids(sums))
 	})
 }
 
